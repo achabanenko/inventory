@@ -1,0 +1,386 @@
+type PurchaseOrder {
+  id: ID!
+  createdAt: String!
+  updatedAt: String!
+  name: String!
+  status: Int!
+  supplierCode: String!
+  whs: String!
+  delDate: String
+  items: [PurchaseOrderItem!]!
+}
+
+type PurchaseOrderItem {
+  id: ID!
+  purchaseOrderId: String!
+  itemCode: String!
+  name: String!
+  qty: Float!
+  deviceId: String!
+}
+
+
+type GoodReceipt {
+  id: ID!
+  createdAt: String!
+  updatedAt: String!
+  name: String!
+  status: Int!
+  supplierCode: String!
+  whs: String!
+  delDate: String
+  items: [GoodReceiptItem!]!
+}
+
+type GoodReceiptItem {
+  id: ID!
+  goodReceiptId: String!
+  itemCode: String!
+  name: String!
+  qty: Float!
+  price: Float!
+  uom: String!
+  deviceId: String!
+}
+
+type StockTake {
+  id: ID!
+  createdAt: String!
+  updatedAt: String!
+  name: String!
+  status: Int!
+  whs: String!
+  items: [StockTakeItem!]!
+}
+
+type StockTakeItem {
+  id: ID!
+  stockTakeId: String!
+  itemCode: String!
+  name: String!
+  qty: Float!
+  uom: String!
+  deviceId: String!
+}
+
+type PrintLabel {
+  id: ID!
+  createdAt: String!
+  updatedAt: String!
+  name: String!
+  status: Int!
+  whs: String!
+  items: [PrintLabelItem!]!
+}
+
+type PrintLabelItem {
+  id: ID!
+  printLabelId: String!
+  itemCode: String!
+  name: String!
+  qty: Float!
+  deviceId: String!
+}
+
+type Supplier {
+  id: ID!
+  code: String!
+  name: String!
+  createdAt: String!
+  updatedAt: String!
+}
+
+type Warehouse {
+  id: ID!
+  code: String!
+  name: String!
+  createdAt: String!
+  updatedAt: String!
+}
+
+type Webhook {
+  id: ID!
+  type: String!
+  url: String!
+  createdAt: String!
+  updatedAt: String!
+}
+
+input DateRangeFilter {
+  from: String
+  to: String
+}
+
+input PurchaseOrderFilter {
+  name: String
+  status: Int
+  supplierCode: String
+  whs: String
+  dateRange: DateRangeFilter
+}
+
+input GoodReceiptFilter {
+  id: String
+  name: String
+  status: Int
+  supplierCode: String
+  whs: String
+  dateRange: DateRangeFilter
+}
+
+input StockTakeFilter {
+  name: String
+  status: Int
+  whs: String
+  dateRange: DateRangeFilter
+}
+
+input PrintLabelFilter {
+  name: String
+  status: Int
+  whs: String
+  dateRange: DateRangeFilter
+}
+
+input SupplierFilter {
+  code: String
+  name: String
+  dateRange: DateRangeFilter
+}
+
+input WarehouseFilter {
+  code: String
+  name: String
+  dateRange: DateRangeFilter
+}
+
+input WebhookFilter {
+  type: String
+  url: String
+  dateRange: DateRangeFilter
+}
+
+type Query {
+  purchaseOrders(filter: PurchaseOrderFilter): [PurchaseOrder!]!
+  goodReceipts(filter: GoodReceiptFilter): [GoodReceipt!]!
+  stockTakes(filter: StockTakeFilter): [StockTake!]!
+  printLabels(filter: PrintLabelFilter): [PrintLabel!]!
+  suppliers(filter: SupplierFilter): [Supplier!]!
+  warehouses(filter: WarehouseFilter): [Warehouse!]!
+  webhooks(filter: WebhookFilter): [Webhook!]!
+}
+
+input UpdatePurchaseOrderInput {
+  id: ID!
+  name: String
+  status: Int
+  supplierCode: String
+  whs: String
+  delDate: String
+}
+
+input UpdateGoodReceiptInput {
+  id: ID!
+  name: String
+  status: Int
+  supplierCode: String
+  whs: String
+  delDate: String
+}
+
+input UpdateStockTakeInput {
+  id: ID!
+  name: String
+  status: Int
+  whs: String
+}
+
+input UpdatePrintLabelInput {
+  id: ID!
+  name: String
+  status: Int
+  whs: String
+}
+
+input UpdateSupplierInput {
+  id: ID!
+  code: String
+  name: String
+}
+
+input UpdateWarehouseInput {
+  id: ID!
+  code: String
+  name: String
+}
+
+input UpdateWebhookInput {
+  id: ID!
+  type: String
+  url: String
+}
+
+input CreatePurchaseOrderItemInput {
+  purchaseOrderId: String!
+  itemCode: String!
+  name: String!
+  qty: Float!
+  deviceId: String
+}
+
+input UpdatePurchaseOrderItemInput {
+  id: ID!
+  itemCode: String
+  name: String
+  qty: Float
+  deviceId: String
+}
+
+input CreateGoodReceiptItemInput {
+  goodReceiptId: String!
+  itemCode: String!
+  name: String!
+  qty: Float!
+  price: Float!
+  uom: String!
+  deviceId: String
+}
+
+input UpdateGoodReceiptItemInput {
+  id: ID!
+  itemCode: String
+  name: String
+  qty: Float
+  price: Float
+  uom: String
+  deviceId: String
+}
+
+input CreateStockTakeItemInput {
+  stockTakeId: String!
+  itemCode: String!
+  name: String!
+  qty: Float!
+  uom: String!
+  deviceId: String
+}
+
+input UpdateStockTakeItemInput {
+  id: ID!
+  itemCode: String
+  name: String
+  qty: Float
+  uom: String
+  deviceId: String
+}
+
+input CreatePrintLabelItemInput {
+  printLabelId: String!
+  itemCode: String!
+  name: String!
+  qty: Float!
+  deviceId: String
+}
+
+input UpdatePrintLabelItemInput {
+  id: ID!
+  itemCode: String
+  name: String
+  qty: Float
+  deviceId: String
+}
+
+type Mutation {
+  createPurchaseOrder(
+    name: String!
+    status: Int!
+    supplierCode: String!
+    whs: String!
+    delDate: String
+  ): PurchaseOrder!
+
+  updatePurchaseOrder(input: UpdatePurchaseOrderInput!): PurchaseOrder!
+
+  deletePurchaseOrder(id: ID!): DeleteResponse!
+
+  createGoodReceipt(
+    name: String!
+    status: Int!
+    supplierCode: String!
+    whs: String!
+    delDate: String
+  ): GoodReceipt!
+
+  updateGoodReceipt(input: UpdateGoodReceiptInput!): GoodReceipt!
+
+  deleteGoodReceipt(id: ID!): DeleteResponse!
+
+  createStockTake(
+    name: String!
+    status: Int!
+    whs: String!
+  ): StockTake!
+
+  updateStockTake(input: UpdateStockTakeInput!): StockTake!
+
+  deleteStockTake(id: ID!): DeleteResponse!
+
+  createPrintLabel(
+    name: String!
+    status: Int!
+    whs: String!
+  ): PrintLabel!
+
+  updatePrintLabel(input: UpdatePrintLabelInput!): PrintLabel!
+
+  deletePrintLabel(id: ID!): DeleteResponse!
+
+  createSupplier(
+    code: String!
+    name: String!
+  ): Supplier!
+
+  updateSupplier(input: UpdateSupplierInput!): Supplier!
+
+  deleteSupplier(id: ID!): DeleteResponse!
+
+  createWarehouse(
+    code: String!
+    name: String!
+    
+  ): Warehouse!
+
+  updateWarehouse(input: UpdateWarehouseInput!): Warehouse!
+
+  deleteWarehouse(id: ID!): DeleteResponse!
+
+  createWebhook(
+    type: String!
+    url: String!
+  ): Webhook!
+
+  updateWebhook(input: UpdateWebhookInput!): Webhook!
+
+  deleteWebhook(id: ID!): DeleteResponse!
+
+  createPurchaseOrderItem(input: CreatePurchaseOrderItemInput!): PurchaseOrderItem!
+  updatePurchaseOrderItem(input: UpdatePurchaseOrderItemInput!): PurchaseOrderItem!
+  deletePurchaseOrderItem(id: ID!): DeleteResponse!
+
+  createGoodReceiptItem(input: CreateGoodReceiptItemInput!): GoodReceiptItem!
+  updateGoodReceiptItem(input: UpdateGoodReceiptItemInput!): GoodReceiptItem!
+  deleteGoodReceiptItem(id: ID!): DeleteResponse!
+
+  createStockTakeItem(input: CreateStockTakeItemInput!): StockTakeItem!
+  updateStockTakeItem(input: UpdateStockTakeItemInput!): StockTakeItem!
+  deleteStockTakeItem(id: ID!): DeleteResponse!
+
+  createPrintLabelItem(input: CreatePrintLabelItemInput!): PrintLabelItem!
+  updatePrintLabelItem(input: UpdatePrintLabelItemInput!): PrintLabelItem!
+  deletePrintLabelItem(id: ID!): DeleteResponse!
+}
+
+type DeleteResponse {
+  success: Boolean!
+  message: String
+}

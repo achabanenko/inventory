@@ -1,22 +1,103 @@
 import 'package:flutter/material.dart';
+import '../services/graphql_service.dart';
 
-class PrintLabelsDetailsPage extends StatelessWidget {
+class PrintLabelsDetailsPage extends StatefulWidget {
   final String batchNumber;
+  final Map<String, dynamic>? labelBatch;
 
   const PrintLabelsDetailsPage({
     super.key,
     required this.batchNumber,
+    this.labelBatch,
   });
+
+  @override
+  State<PrintLabelsDetailsPage> createState() => _PrintLabelsDetailsPageState();
+}
+
+class _PrintLabelsDetailsPageState extends State<PrintLabelsDetailsPage> {
+  final PrintLabelService _printLabelService = PrintLabelService();
+  Map<String, dynamic>? _labelBatch;
+  bool _isLoading = false;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _labelBatch = widget.labelBatch;
+    if (_labelBatch == null) {
+      _loadLabelBatch();
+    }
+  }
+
+  Future<void> _loadLabelBatch() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      // Use GraphQL service to fetch the label batch
+      final filter = {'id': widget.batchNumber};
+      final labels = await _printLabelService.getPrintLabels(filter: filter);
+      if (labels.isNotEmpty) {
+        setState(() {
+          _labelBatch = labels.first;
+        });
+      } else {
+        setState(() {
+          _errorMessage = 'Label batch not found';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to load label batch: ${e.toString()}';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Label Batch #$batchNumber'),
+        title: Text('Label Batch #${widget.batchNumber}'),
         backgroundColor: Theme.of(context).colorScheme.primary,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadLabelBatch,
+            tooltip: 'Refresh from server',
+          ),
+        ],
       ),
-      body: Column(
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _errorMessage != null
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        _errorMessage!,
+                        style: const TextStyle(color: Colors.red),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: _loadLabelBatch,
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                )
+              : _labelBatch == null
+                  ? const Center(child: Text('No label batch data available'))
+                  : Column(
         children: [
           // Batch Summary Card
           Card(
@@ -34,7 +115,7 @@ class PrintLabelsDetailsPage extends StatelessWidget {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      Text(_getLabelType(int.parse(batchNumber))),
+                      Text(_getLabelType(_labelBatch?['status'] ?? 0)),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -47,7 +128,7 @@ class PrintLabelsDetailsPage extends StatelessWidget {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      Text(DateTime.now().toString().substring(0, 10)),
+                      Text(_formatDate(_labelBatch?['createdAt'])),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -60,7 +141,7 @@ class PrintLabelsDetailsPage extends StatelessWidget {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      Text('${(int.parse(batchNumber) % 5 + 1) * 10} labels'),
+                      Text('${_labelBatch?['items']?.length ?? 0} items'),
                     ],
                   ),
                 ],
@@ -83,7 +164,10 @@ class PrintLabelsDetailsPage extends StatelessWidget {
                 IconButton(
                   icon: const Icon(Icons.qr_code_scanner),
                   onPressed: () {
-                    // TODO: Implement barcode scanner
+                    // TODO: Implement barcode scanner to add new items
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Barcode scanner not implemented yet')),
+                    );
                   },
                   color: Theme.of(context).primaryColor,
                 ),
@@ -94,7 +178,7 @@ class PrintLabelsDetailsPage extends StatelessWidget {
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.all(16.0),
-              itemCount: 10, // Replace with actual items count
+              itemCount: _labelBatch?['items']?.length ?? 0,
               itemBuilder: (context, index) {
                 return Card(
                   child: Padding(
@@ -118,7 +202,7 @@ class PrintLabelsDetailsPage extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Product ${index + 1}',
+                                _labelBatch?['items'][index]['name'] ?? 'Unknown Product',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 16,
@@ -126,7 +210,7 @@ class PrintLabelsDetailsPage extends StatelessWidget {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                'Barcode: ${1234567890 + index}',
+                                'Item Code: ${_labelBatch?['items'][index]['itemCode'] ?? 'N/A'}',
                                 style: TextStyle(
                                   color: Colors.grey.shade600,
                                   fontFamily: 'Courier',
@@ -137,7 +221,7 @@ class PrintLabelsDetailsPage extends StatelessWidget {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    'Labels: ${(index % 3 + 1) * 2}',
+                                    'Qty: ${_labelBatch?['items'][index]['qty'] ?? 0}',
                                     style: const TextStyle(
                                       color: Colors.purple,
                                       fontWeight: FontWeight.bold,
@@ -180,8 +264,28 @@ class PrintLabelsDetailsPage extends StatelessWidget {
               children: [
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: () {
-                      // TODO: Implement print functionality
+                    onPressed: () async {
+                      // Print functionality using GraphQL
+                      if (_labelBatch != null) {
+                        try {
+                          // Update the status to 'Printed'
+                          await _printLabelService.updatePrintLabel(
+                            id: _labelBatch!['id'],
+                            status: 2, // Printed status
+                          );
+                          
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Labels sent to printer')),
+                          );
+                          
+                          // Refresh the data
+                          _loadLabelBatch();
+                        } catch (e) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Error printing labels: ${e.toString()}')),
+                          );
+                        }
+                      }
                     },
                     icon: const Icon(Icons.print),
                     label: const Text('Print All Labels'),
@@ -212,6 +316,16 @@ class PrintLabelsDetailsPage extends StatelessWidget {
         return 'Price Tags';
       default:
         return 'Custom Labels';
+    }
+  }
+
+  String _formatDate(String? dateString) {
+    if (dateString == null) return 'N/A';
+    try {
+      final dateTime = DateTime.parse(dateString);
+      return '${dateTime.year}-${dateTime.month.toString().padLeft(2, '0')}-${dateTime.day.toString().padLeft(2, '0')}';
+    } catch (e) {
+      return dateString;
     }
   }
 } 
