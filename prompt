@@ -1,0 +1,4 @@
+Can you check the following Por The PurchaseOrders and PurchaseOrderItems: 
+Documents located on the cloud. On device user can download them and work offline. After any updates, such as create, update,delete document or document entry, mark this change using DeviceIdService field deviceId .
+Any time user can sync local changes to the cloud using sync button.
+I did scan some purchaseorder entries, but it is not appear in the purchase order details when i came back to order from the list

@@ -36,6 +36,7 @@ class DatabaseService {
       _purchaseOrdersCollection = await _getOrCreateCollection(
         _purchaseOrdersCollectionName,
       );
+
       debugPrint('Collection created/opened: $_purchaseOrdersCollectionName');
     } catch (e) {
       debugPrint('Error initializing database: $e');
@@ -51,6 +52,7 @@ class DatabaseService {
 
     try {
       // Check if collection exists in the default scope
+
       final collections = await _database!.collections();
       Collection? existingCollection;
 

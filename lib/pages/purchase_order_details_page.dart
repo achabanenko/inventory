@@ -30,14 +30,22 @@ class _PurchaseOrderDetailsPageState extends State<PurchaseOrderDetailsPage> {
   }
 
   Future<void> _initializeOrderItems() async {
+    setState(() {
+      _isSaving = true;
+    });
+    
     try {
       final filter = {'id': widget.order['id'] ?? ''};
       final orders = await _purchaseOrderService.getPurchaseOrders(
         filter: filter,
+        // Use noCache to ensure we get the latest data
       );
 
       if (orders.isEmpty) {
         debugPrint('Purchase order not found: ${widget.orderNumber}');
+        setState(() {
+          _isSaving = false;
+        });
         return;
       }
 
@@ -47,11 +55,17 @@ class _PurchaseOrderDetailsPageState extends State<PurchaseOrderDetailsPage> {
         orderItems = List<Map<String, dynamic>>.from(
           pulledOrder['items'] ?? [],
         );
+        // Update the local order object with the latest data
+        widget.order['items'] = orderItems;
+        _isSaving = false;
         debugPrint(
           'Loaded ${orderItems.length} items from order: ${widget.orderNumber}',
         );
       });
     } catch (e) {
+      setState(() {
+        _isSaving = false;
+      });
       debugPrint('Error loading purchase order: $e');
     }
   }
@@ -84,48 +98,24 @@ class _PurchaseOrderDetailsPageState extends State<PurchaseOrderDetailsPage> {
 
       // Update the order with the new items list
       widget.order['items'] = orderItems;
-      debugPrint('Updated order[items]: ${widget.order['items']}');
+      debugPrint('Updated order[items]: ${widget.order["items"]}');
       debugPrint('Current orderItems after adding: $orderItems');
     });
 
-    // Update the purchase order using GraphQL
-    try {
-      // Update the purchase order
-      await _purchaseOrderService.updatePurchaseOrder(
-        id: widget.order['id'] ?? '',
-        name: widget.order['name'],
-        status: widget.order['status'],
-        supplierCode: widget.order['supplierCode'],
-        whs: widget.order['whs'],
-        // delDate: widget.order['delDate'],
+    // No need to update the purchase order here as the item is already created via GraphQL
+    // in the scan page and will be retrieved when we refresh the items list
+    
+    if (mounted) {
+      setState(() {
+        _isSaving = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Item added to purchase order'),
+          duration: Duration(seconds: 2),
+        ),
       );
-
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Purchase order updated'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error updating purchase order: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
     }
   }
 
@@ -139,7 +129,10 @@ class _PurchaseOrderDetailsPageState extends State<PurchaseOrderDetailsPage> {
               onItemAdded: _addItemToOrder,
             ),
       ),
-    );
+    ).then((_) {
+      // Refresh items when returning from scan page
+      _initializeOrderItems();
+    });
   }
 
   void _submitToApi() async {
