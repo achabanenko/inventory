@@ -11,18 +11,18 @@ import 'services/database_service.dart';
 void main() async {
   // Ensure Flutter is initialized
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Set preferred orientations
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
-  
+
   // Initialize Couchbase Lite
   try {
     await CouchbaseLiteFlutter.init();
     print('Couchbase Lite initialized successfully');
-    
+
     // Initialize database service
     final databaseService = DatabaseService();
     await databaseService.initialize();
@@ -31,7 +31,7 @@ void main() async {
     print('Error initializing database: $e');
     // Continue with app startup even if database fails
   }
-  
+
   runApp(const MyApp());
 }
 
@@ -71,9 +71,7 @@ class HomePage extends StatelessWidget {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (context) => const SettingsPage(),
-                ),
+                MaterialPageRoute(builder: (context) => const SettingsPage()),
               );
             },
           ),
@@ -148,8 +146,13 @@ class HomePage extends StatelessWidget {
     );
   }
 
-  Widget _buildMenuCard(BuildContext context, String title, IconData icon,
-      Color color, VoidCallback onTap) {
+  Widget _buildMenuCard(
+    BuildContext context,
+    String title,
+    IconData icon,
+    Color color,
+    VoidCallback onTap,
+  ) {
     return Card(
       elevation: 4,
       child: InkWell(
@@ -161,20 +164,13 @@ class HomePage extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [
-                color.withOpacity(0.7),
-                color,
-              ],
+              colors: [color.withOpacity(0.7), color],
             ),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                icon,
-                size: 48,
-                color: Colors.white,
-              ),
+              Icon(icon, size: 48, color: Colors.white),
               const SizedBox(height: 16),
               Text(
                 title,

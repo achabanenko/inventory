@@ -43,6 +43,7 @@ dependencies:
   android_id: ^0.4.0
   graphql: ^5.2.0-beta.7  # GraphQL client for Dart
   graphql_flutter: ^5.2.0-beta.7  # GraphQL client for Flutter
+  uuid: ^4.3.3  # For generating unique identifiers
 
 dev_dependencies:
   flutter_test:

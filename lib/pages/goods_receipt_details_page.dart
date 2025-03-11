@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import '../services/graphql_service.dart';
+import '../services/good_receipt_service.dart';
 import '../models/good_receipt.dart';
 import 'dart:math' as math;
 import '../services/device_id_service.dart';
+import 'goods_receipt_scan_item_page.dart';
 
 class GoodsReceiptDetailsPage extends StatefulWidget {
   static const routeName = '/goods-receipt-details';
@@ -100,9 +101,9 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
       setState(() {
         _isLoading = true;
       });
-      
+
       final success = await _goodReceiptService.deleteGoodReceiptItem(itemId);
-      
+
       if (success) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -125,11 +126,30 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
         _isLoading = false;
       });
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
     }
+  }
+
+  Future<void> _navigateToScanItemPage() async {
+    if (_receipt == null) return;
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder:
+            (context) => GoodsReceiptScanItemPage(
+              goodReceiptId: _receipt!.id,
+              onItemAdded: (Map<String, dynamic> item) {
+                // This callback will be called when an item is added in the scan page
+                // Refresh the receipt details to show the new item
+                _fetchGoodReceipt();
+              },
+            ),
+      ),
+    );
   }
 
   Future<void> _showAddItemDialog(BuildContext context) async {
@@ -266,12 +286,20 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
         backgroundColor: Theme.of(context).colorScheme.primary,
         foregroundColor: Colors.white,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _fetchGoodReceipt,
-          ),
+          // IconButton(
+          //   icon: const Icon(Icons.refresh),
+          //   onPressed: _fetchGoodReceipt,
+          // ),
         ],
       ),
+      floatingActionButton:
+          _receipt != null
+              ? FloatingActionButton(
+                onPressed: _navigateToScanItemPage,
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                child: const Icon(Icons.qr_code_scanner, color: Colors.white),
+              )
+              : null,
       body:
           _isLoading
               ? const Center(child: CircularProgressIndicator())
@@ -417,10 +445,30 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
                                     style: TextStyle(fontSize: 18),
                                   ),
                                   const SizedBox(height: 16),
-                                  ElevatedButton(
-                                    onPressed:
-                                        () => _showAddItemDialog(context),
-                                    child: const Text('Add Item'),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      ElevatedButton.icon(
+                                        onPressed:
+                                            () => _showAddItemDialog(context),
+                                        icon: const Icon(Icons.add),
+                                        label: const Text('Add Item Manually'),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      ElevatedButton.icon(
+                                        onPressed:
+                                            () => _navigateToScanItemPage(),
+                                        icon: const Icon(Icons.qr_code_scanner),
+                                        label: const Text('Scan Item'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.primary,
+                                          foregroundColor: Colors.white,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ],
                               ),

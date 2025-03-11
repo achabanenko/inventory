@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'goods_receipt_details_page.dart';
-import '../services/graphql_service.dart';
+import '../services/good_receipt_service.dart';
 import '../models/good_receipt.dart';
 
 class GoodsReceiptPage extends StatefulWidget {
@@ -12,7 +12,6 @@ class GoodsReceiptPage extends StatefulWidget {
 
 class _GoodsReceiptPageState extends State<GoodsReceiptPage> {
   final GoodReceiptService _goodReceiptService = GoodReceiptService();
-  final GraphQLService _graphQLService = GraphQLService();
   bool _isLoading = true;
   List<GoodReceipt> _goodReceipts = [];
   String? _errorMessage;
@@ -20,16 +19,16 @@ class _GoodsReceiptPageState extends State<GoodsReceiptPage> {
   @override
   void initState() {
     super.initState();
-    _initializeGraphQL();
+    _initialize();
   }
 
-  Future<void> _initializeGraphQL() async {
+  Future<void> _initialize() async {
     try {
-      await _graphQLService.initialize();
+      await _goodReceiptService.initialize();
       _fetchGoodReceipts();
     } catch (e) {
       setState(() {
-        _errorMessage = 'Failed to initialize GraphQL client: $e';
+        _errorMessage = 'Failed to initialize database: $e';
         _isLoading = false;
       });
     }
