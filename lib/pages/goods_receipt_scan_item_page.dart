@@ -41,6 +41,17 @@ class _GoodsReceiptScanItemPageState extends State<GoodsReceiptScanItemPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _barcodeFocusNode.requestFocus();
     });
+    
+    // Add listener to select all text when quantity field receives focus
+    _quantityFocusNode.addListener(() {
+      if (_quantityFocusNode.hasFocus) {
+        // Select all text when the field receives focus
+        _quantityController.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: _quantityController.text.length,
+        );
+      }
+    });
   }
 
   @override
@@ -218,6 +229,13 @@ class _GoodsReceiptScanItemPageState extends State<GoodsReceiptScanItemPage> {
                     keyboardType: TextInputType.number,
                     textInputAction: TextInputAction.done,
                     onSubmitted: (_) => _processBarcode(_barcodeController.text),
+                    onTap: () {
+                      // Select all text when the field receives focus
+                      _quantityController.selection = TextSelection(
+                        baseOffset: 0,
+                        extentOffset: _quantityController.text.length,
+                      );
+                    },
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly, // Only digits
                     ],

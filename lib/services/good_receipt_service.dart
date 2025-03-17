@@ -14,11 +14,15 @@ class GoodReceiptService {
   // Collection names
   static const String _goodReceiptsCollectionName = 'goodreceipts';
   static const String _goodReceiptItemsCollectionName = 'goodreceiptitems';
+  static const String _warehouseCollectionName = 'warehouses';
+  static const String _supplierCollectionName = 'suppliers';
 
   // Database and collections
   Database? _database;
   Collection? _goodReceiptsCollection;
   Collection? _goodReceiptItemsCollection;
+  Collection? _warehouseCollection;
+  Collection? _supplierCollection;
 
   // Singleton pattern
   static final GoodReceiptService _instance = GoodReceiptService._internal();
@@ -47,9 +51,15 @@ class GoodReceiptService {
       _goodReceiptItemsCollection = await _getOrCreateCollection(
         _goodReceiptItemsCollectionName,
       );
+      _warehouseCollection = await _getOrCreateCollection(
+        _warehouseCollectionName,
+      );
+      _supplierCollection = await _getOrCreateCollection(
+        _supplierCollectionName,
+      );
 
       debugPrint(
-        'Collections created/opened: $_goodReceiptsCollectionName, $_goodReceiptItemsCollectionName',
+        'Collections created/opened: $_goodReceiptsCollectionName, $_goodReceiptItemsCollectionName, $_warehouseCollectionName, $_supplierCollectionName',
       );
     } catch (e) {
       debugPrint('Error initializing good receipt collections: $e');
@@ -106,7 +116,9 @@ class GoodReceiptService {
         ExpressionInterface? whereExpression;
 
         filter.forEach((key, value) {
-          final condition = Expression.property(key).equalTo(Expression.value(value));
+          final condition = Expression.property(
+            key,
+          ).equalTo(Expression.value(value));
           if (whereExpression == null) {
             whereExpression = condition;
           } else {
@@ -241,8 +253,9 @@ class GoodReceiptService {
 
       if (name != null) mutableDoc.setValue(name, key: 'name');
       if (status != null) mutableDoc.setValue(status, key: 'status');
-      if (supplierCode != null)
+      if (supplierCode != null) {
         mutableDoc.setValue(supplierCode, key: 'supplierCode');
+      }
       if (whs != null) mutableDoc.setValue(whs, key: 'whs');
       if (delDate != null) mutableDoc.setValue(delDate, key: 'delDate');
 
@@ -490,6 +503,176 @@ class GoodReceiptService {
     } catch (e) {
       debugPrint('Error deleting good receipt item: $e');
       return false;
+    }
+  }
+
+  /// Create a warehouse
+  Future<Map<String, dynamic>> createWarehouse({
+    required String code,
+    required String name,
+  }) async {
+    if (_warehouseCollection == null) {
+      await initialize();
+    }
+
+    try {
+      // Check if a warehouse with the same code already exists
+      final existingWarehouses = await getWarehouses(filter: {'code': code});
+      if (existingWarehouses.isNotEmpty) {
+        throw Exception('A warehouse with code $code already exists');
+      }
+
+      // Create a document
+      final doc = MutableDocument.withId(code);
+
+      // Set properties
+      doc.setValue(code, key: 'code');
+      doc.setValue(name, key: 'name');
+      doc.setValue(DateTime.now().toIso8601String(), key: 'createdAt');
+
+      // Save to database
+      await _warehouseCollection!.saveDocument(doc);
+
+      return {'code': code, 'name': name, 'createdAt': doc.string('createdAt')};
+    } catch (e) {
+      debugPrint('Error creating warehouse: $e');
+      rethrow;
+    }
+  }
+
+  /// Get all warehouses
+  Future<List<Map<String, dynamic>>> getWarehouses({
+    Map<String, dynamic>? filter,
+  }) async {
+    if (_warehouseCollection == null) {
+      await initialize();
+    }
+
+    try {
+      // Build a query to get all warehouses
+      final query = QueryBuilder()
+          .select(SelectResult.all())
+          .from(DataSource.collection(_warehouseCollection!));
+
+      // Apply filter if provided
+      if (filter != null && filter.isNotEmpty) {
+        ExpressionInterface? whereExpression;
+
+        filter.forEach((key, value) {
+          final condition = Expression.property(
+            key,
+          ).equalTo(Expression.value(value));
+          if (whereExpression == null) {
+            whereExpression = condition;
+          } else {
+            whereExpression = whereExpression!.and(condition);
+          }
+        });
+
+        if (whereExpression != null) {
+          query.where(whereExpression!);
+        }
+      }
+
+      final resultSet = await query.execute();
+      final results = <Map<String, dynamic>>[];
+
+      await for (final result in resultSet.asStream()) {
+        final allResult = result.dictionary(0);
+        if (allResult != null) {
+          results.add(allResult.toPlainMap());
+        }
+      }
+
+      return results;
+    } catch (e) {
+      debugPrint('Error getting warehouses: $e');
+      rethrow;
+    }
+  }
+
+  /// Create a supplier
+  Future<Map<String, dynamic>> createSupplier({
+    required String code,
+    required String name,
+  }) async {
+    if (_supplierCollection == null) {
+      await initialize();
+    }
+
+    try {
+      // Check if a supplier with the same code already exists
+      final existingSuppliers = await getSuppliers(filter: {'code': code});
+      if (existingSuppliers.isNotEmpty) {
+        throw Exception('A supplier with code $code already exists');
+      }
+
+      // Create a document
+      final doc = MutableDocument.withId(code);
+
+      // Set properties
+      doc.setValue(code, key: 'code');
+      doc.setValue(name, key: 'name');
+      doc.setValue(DateTime.now().toIso8601String(), key: 'createdAt');
+
+      // Save to database
+      await _supplierCollection!.saveDocument(doc);
+
+      return {'code': code, 'name': name, 'createdAt': doc.string('createdAt')};
+    } catch (e) {
+      debugPrint('Error creating supplier: $e');
+      rethrow;
+    }
+  }
+
+  /// Get all suppliers
+  Future<List<Map<String, dynamic>>> getSuppliers({
+    Map<String, dynamic>? filter,
+  }) async {
+    if (_supplierCollection == null) {
+      await initialize();
+    }
+
+    try {
+      // Build a query to get all suppliers
+      final query = QueryBuilder()
+          .select(SelectResult.all())
+          .from(DataSource.collection(_supplierCollection!));
+
+      // Apply filter if provided
+      if (filter != null && filter.isNotEmpty) {
+        ExpressionInterface? whereExpression;
+
+        filter.forEach((key, value) {
+          final condition = Expression.property(
+            key,
+          ).equalTo(Expression.value(value));
+          if (whereExpression == null) {
+            whereExpression = condition;
+          } else {
+            whereExpression = whereExpression!.and(condition);
+          }
+        });
+
+        if (whereExpression != null) {
+          query.where(whereExpression!);
+        }
+      }
+
+      final resultSet = await query.execute();
+      final results = <Map<String, dynamic>>[];
+
+      await for (final result in resultSet.asStream()) {
+        final allResult = result.dictionary(0);
+        if (allResult != null) {
+          results.add(allResult.toPlainMap());
+        }
+      }
+
+      return results;
+    } catch (e) {
+      debugPrint('Error getting suppliers: $e');
+      rethrow;
     }
   }
 }

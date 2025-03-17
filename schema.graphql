@@ -106,12 +106,38 @@ type Webhook {
   updatedAt: String!
 }
 
+type Item {
+  id: ID!
+  itemCode: String!
+  name: String!
+  description: String!
+  color: String!
+  size: String!
+  CustomeStr1: String
+  CustomeStr2: String
+  CustomeStr3: String
+  CustomeInt1: Int
+  CustomeInt2: Int
+  CustomeInt3: Int
+  CustomeNum1: Float
+  CustomeNum2: Float
+  CustomeNum3: Float
+}
+
+type WhsItem {
+  id: ID!
+  itemCode: String!
+  name: String!
+  onstock: Float!
+}
+
 input DateRangeFilter {
   from: String
   to: String
 }
 
 input PurchaseOrderFilter {
+  id: String
   name: String
   status: Int
   supplierCode: String
@@ -160,7 +186,39 @@ input WebhookFilter {
   dateRange: DateRangeFilter
 }
 
+input PaginationInput {
+  page: Int = 1
+  pageSize: Int = 10
+}
+
+input ItemFilter {
+  itemCode: String
+  name: String
+  description: String
+  color: String
+  size: String
+  dateRange: DateRangeFilter
+  pagination: PaginationInput
+}
+
+input WhsItemFilter {
+  itemCode: String
+  name: String
+  onstock: Float
+  dateRange: DateRangeFilter
+}
+
+type PaginatedItems {
+  items: [Item!]!
+  total: Int!
+  page: Int!
+  pageSize: Int!
+  totalPages: Int!
+}
+
 type Query {
+  items(filter: ItemFilter): PaginatedItems!
+  whsItems(filter: WhsItemFilter): [WhsItem!]!
   purchaseOrders(filter: PurchaseOrderFilter): [PurchaseOrder!]!
   goodReceipts(filter: GoodReceiptFilter): [GoodReceipt!]!
   stockTakes(filter: StockTakeFilter): [StockTake!]!
@@ -290,6 +348,54 @@ input UpdatePrintLabelItemInput {
   deviceId: String
 }
 
+input CreateItemInput {
+  itemCode: String!
+  name: String!
+  description: String!
+  color: String!
+  size: String!
+  CustomeStr1: String
+  CustomeStr2: String
+  CustomeStr3: String
+  CustomeInt1: Int
+  CustomeInt2: Int
+  CustomeInt3: Int
+  CustomeNum1: Float
+  CustomeNum2: Float
+  CustomeNum3: Float
+}
+
+input UpdateItemInput {
+  id: ID!
+  itemCode: String
+  name: String
+  description: String
+  color: String
+  size: String
+  CustomeStr1: String
+  CustomeStr2: String
+  CustomeStr3: String
+  CustomeInt1: Int
+  CustomeInt2: Int
+  CustomeInt3: Int
+  CustomeNum1: Float
+  CustomeNum2: Float
+  CustomeNum3: Float
+}
+
+input CreateWhsItemInput {
+  itemCode: String!
+  name: String!
+  onstock: Float!
+}
+
+input UpdateWhsItemInput {
+  id: ID!
+  itemCode: String
+  name: String
+  onstock: Float
+}
+
 type Mutation {
   createPurchaseOrder(
     name: String!
@@ -378,6 +484,14 @@ type Mutation {
   createPrintLabelItem(input: CreatePrintLabelItemInput!): PrintLabelItem!
   updatePrintLabelItem(input: UpdatePrintLabelItemInput!): PrintLabelItem!
   deletePrintLabelItem(id: ID!): DeleteResponse!
+
+  createItem(input: CreateItemInput!): Item!
+  updateItem(input: UpdateItemInput!): Item!
+  deleteItem(id: ID!): DeleteResponse!
+
+  createWhsItem(input: CreateWhsItemInput!): WhsItem!
+  updateWhsItem(input: UpdateWhsItemInput!): WhsItem!
+  deleteWhsItem(id: ID!): DeleteResponse!
 }
 
 type DeleteResponse {

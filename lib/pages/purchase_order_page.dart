@@ -301,17 +301,18 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => PurchaseOrderDetailsPage(
-              orderNumber: orderNumber,
-              order: latestOrders.first,
-            ),
+            builder:
+                (context) => PurchaseOrderDetailsPage(
+                  orderNumber: orderNumber,
+                  order: latestOrders.first,
+                ),
           ),
         );
       }
     } catch (e) {
       // Close the loading dialog
       if (context.mounted) Navigator.pop(context);
-      
+
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -326,22 +327,24 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
   // Show dialog to create a new purchase order
   Future<void> _showCreatePurchaseOrderDialog() async {
     final TextEditingController nameController = TextEditingController();
-    final TextEditingController supplierCodeController = TextEditingController();
+    final TextEditingController supplierCodeController =
+        TextEditingController();
     final TextEditingController whsController = TextEditingController();
-    
+
     // Default values
-    nameController.text = 'PO-${DateTime.now().millisecondsSinceEpoch.toString().substring(5)}';
+    nameController.text =
+        'PO-${DateTime.now().millisecondsSinceEpoch.toString().substring(5)}';
     whsController.text = 'Main';
-    
+
     // Fetch warehouses and suppliers from server
     List<Map<String, dynamic>> warehouses = [];
     List<Map<String, dynamic>> suppliers = [];
-    
+
     try {
       // Initialize GraphQL service
       final graphQLService = GraphQLService();
       await graphQLService.initialize();
-      
+
       // Fetch warehouses and suppliers in parallel
       warehouses = await _warehouseService.getWarehouses();
       suppliers = await _supplierService.getSuppliers();
@@ -355,23 +358,25 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
         );
       }
     }
-    
+
     // Warehouse and supplier suggestions
-    List<String> warehouseSuggestions = warehouses.map((w) => w['code'] as String).toList();
-    List<String> supplierSuggestions = suppliers.map((s) => s['code'] as String).toList();
-    
+    List<String> warehouseSuggestions =
+        warehouses.map((w) => w['code'] as String).toList();
+    List<String> supplierSuggestions =
+        suppliers.map((s) => s['code'] as String).toList();
+
     // Map to store full supplier/warehouse details for display
     Map<String, String> supplierNames = {};
     Map<String, String> warehouseNames = {};
-    
+
     for (var supplier in suppliers) {
       supplierNames[supplier['code']] = supplier['name'];
     }
-    
+
     for (var warehouse in warehouses) {
       warehouseNames[warehouse['code']] = warehouse['name'];
     }
-    
+
     if (context.mounted) {
       await showDialog(
         context: context,
@@ -400,7 +405,8 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
                           }
                           return supplierSuggestions.where((suggestion) {
                             final code = suggestion.toLowerCase();
-                            final name = supplierNames[suggestion]?.toLowerCase() ?? '';
+                            final name =
+                                supplierNames[suggestion]?.toLowerCase() ?? '';
                             final query = textEditingValue.text.toLowerCase();
                             return code.contains(query) || name.contains(query);
                           }).toList();
@@ -408,12 +414,18 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
                         onSelected: (String selection) {
                           supplierCodeController.text = selection;
                         },
-                        fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                        fieldViewBuilder: (
+                          context,
+                          controller,
+                          focusNode,
+                          onFieldSubmitted,
+                        ) {
                           // Use the existing controller if it has a value
-                          if (supplierCodeController.text.isNotEmpty && controller.text.isEmpty) {
+                          if (supplierCodeController.text.isNotEmpty &&
+                              controller.text.isEmpty) {
                             controller.text = supplierCodeController.text;
                           }
-                          
+
                           return TextField(
                             controller: controller,
                             focusNode: focusNode,
@@ -423,11 +435,14 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
                             decoration: InputDecoration(
                               labelText: 'Supplier Code',
                               hintText: 'Enter or select supplier code',
-                              helperText: supplierNames[controller.text] ?? 'Custom supplier',
+                              helperText:
+                                  supplierNames[controller.text] ??
+                                  'Custom supplier',
                               helperStyle: TextStyle(
-                                color: supplierNames[controller.text] != null 
-                                    ? Colors.green 
-                                    : Colors.orange,
+                                color:
+                                    supplierNames[controller.text] != null
+                                        ? Colors.green
+                                        : Colors.orange,
                               ),
                             ),
                           );
@@ -438,16 +453,24 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
                             child: Material(
                               elevation: 4.0,
                               child: ConstrainedBox(
-                                constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
+                                constraints: const BoxConstraints(
+                                  maxHeight: 200,
+                                  maxWidth: 300,
+                                ),
                                 child: ListView.builder(
                                   padding: EdgeInsets.zero,
                                   shrinkWrap: true,
                                   itemCount: options.length,
-                                  itemBuilder: (BuildContext context, int index) {
+                                  itemBuilder: (
+                                    BuildContext context,
+                                    int index,
+                                  ) {
                                     final option = options.elementAt(index);
                                     return ListTile(
                                       title: Text(option),
-                                      subtitle: Text(supplierNames[option] ?? ''),
+                                      subtitle: Text(
+                                        supplierNames[option] ?? '',
+                                      ),
                                       onTap: () {
                                         onSelected(option);
                                       },
@@ -468,7 +491,8 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
                           }
                           return warehouseSuggestions.where((suggestion) {
                             final code = suggestion.toLowerCase();
-                            final name = warehouseNames[suggestion]?.toLowerCase() ?? '';
+                            final name =
+                                warehouseNames[suggestion]?.toLowerCase() ?? '';
                             final query = textEditingValue.text.toLowerCase();
                             return code.contains(query) || name.contains(query);
                           }).toList();
@@ -476,12 +500,18 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
                         onSelected: (String selection) {
                           whsController.text = selection;
                         },
-                        fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                        fieldViewBuilder: (
+                          context,
+                          controller,
+                          focusNode,
+                          onFieldSubmitted,
+                        ) {
                           // Use the existing controller if it has a value
-                          if (whsController.text.isNotEmpty && controller.text.isEmpty) {
+                          if (whsController.text.isNotEmpty &&
+                              controller.text.isEmpty) {
                             controller.text = whsController.text;
                           }
-                          
+
                           return TextField(
                             controller: controller,
                             focusNode: focusNode,
@@ -491,11 +521,14 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
                             decoration: InputDecoration(
                               labelText: 'Warehouse',
                               hintText: 'Enter or select warehouse code',
-                              helperText: warehouseNames[controller.text] ?? 'Custom warehouse',
+                              helperText:
+                                  warehouseNames[controller.text] ??
+                                  'Custom warehouse',
                               helperStyle: TextStyle(
-                                color: warehouseNames[controller.text] != null 
-                                    ? Colors.green 
-                                    : Colors.orange,
+                                color:
+                                    warehouseNames[controller.text] != null
+                                        ? Colors.green
+                                        : Colors.orange,
                               ),
                             ),
                           );
@@ -506,16 +539,24 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
                             child: Material(
                               elevation: 4.0,
                               child: ConstrainedBox(
-                                constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
+                                constraints: const BoxConstraints(
+                                  maxHeight: 200,
+                                  maxWidth: 300,
+                                ),
                                 child: ListView.builder(
                                   padding: EdgeInsets.zero,
                                   shrinkWrap: true,
                                   itemCount: options.length,
-                                  itemBuilder: (BuildContext context, int index) {
+                                  itemBuilder: (
+                                    BuildContext context,
+                                    int index,
+                                  ) {
                                     final option = options.elementAt(index);
                                     return ListTile(
                                       title: Text(option),
-                                      subtitle: Text(warehouseNames[option] ?? ''),
+                                      subtitle: Text(
+                                        warehouseNames[option] ?? '',
+                                      ),
                                       onTap: () {
                                         onSelected(option);
                                       },
@@ -549,7 +590,7 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
                         );
                         return;
                       }
-                      
+
                       Navigator.of(context).pop();
                       _createPurchaseOrder(
                         name: nameController.text,
@@ -599,7 +640,7 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
     try {
       // Get device ID
       final deviceId = await _deviceIdService.getDeviceId();
-      
+
       // Initialize GraphQL service
       final graphQLService = GraphQLService();
       await graphQLService.initialize();
@@ -642,7 +683,7 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
     } catch (e) {
       // Close the loading dialog
       if (context.mounted) Navigator.pop(context);
-      
+
       // Show error message
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -863,10 +904,13 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
                                               : Colors.orange,
                                     ),
                                     onTap: () {
-                                      _openPurchaseOrderDetails(order, orderNumber);
+                                      _openPurchaseOrderDetails(
+                                        order,
+                                        orderNumber,
+                                      );
                                     },
                                   ),
-                                  ButtonBar(
+                                  OverflowBar(
                                     alignment: MainAxisAlignment.spaceEvenly,
                                     children: [
                                       TextButton.icon(
@@ -876,7 +920,10 @@ class _PurchaseOrderPageState extends State<PurchaseOrderPage> {
                                         ),
                                         label: const Text('View'),
                                         onPressed: () {
-                                          _openPurchaseOrderDetails(order, orderNumber);
+                                          _openPurchaseOrderDetails(
+                                            order,
+                                            orderNumber,
+                                          );
                                         },
                                       ),
                                       TextButton.icon(

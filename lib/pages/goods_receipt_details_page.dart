@@ -9,8 +9,7 @@ class GoodsReceiptDetailsPage extends StatefulWidget {
   static const routeName = '/goods-receipt-details';
   final String receiptId;
 
-  const GoodsReceiptDetailsPage({Key? key, required this.receiptId})
-    : super(key: key);
+  const GoodsReceiptDetailsPage({super.key, required this.receiptId});
 
   @override
   State<GoodsReceiptDetailsPage> createState() =>
