@@ -1,4 +1,11 @@
-Can you check the following Por The PurchaseOrders and PurchaseOrderItems: 
-Documents located on the cloud. On device user can download them and work offline. After any updates, such as create, update,delete document or document entry, mark this change using DeviceIdService field deviceId .
-Any time user can sync local changes to the cloud using sync button.
-I did scan some purchaseorder entries, but it is not appear in the purchase order details when i came back to order from the list
+Please make this changes to the GoodsReceipts
+1. On creating new goods receipt, create new document on the server(!) as well
+2. We can work with GoodReceipt document in 3 ways:
+  a. Just scan barcode and add new item. In this case we are:
+    - keeping new items locally,use local storage
+    - updating updatedAt timestamp
+    - filed DeviceId should be filled this device id
+    - we can push our scanned data to the server(!) by demind using special buttop "Push" (use graphql),for the currect active GoodsReceit, wich is already existing on the server(!), 
+  b. Edit GoodsReceipt. In this case we are posting any changes to the server(!) like we douing it for the PuyrchaseOrders at the moment, use graphgl to get data from server and post data to server , graphql schema from server attached here
+    
+  

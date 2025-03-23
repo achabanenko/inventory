@@ -3,13 +3,16 @@ import 'package:uuid/uuid.dart';
 import 'package:cbl/cbl.dart';
 import 'database_service.dart';
 import 'device_id_service.dart';
+import 'graphql_service.dart' as gql;
 
-/// Service for managing GoodReceipt operations using local database
+/// Service for managing GoodReceipt operations using local database and server integration
 class GoodReceiptService {
   // Create an instance of the database service
   final DatabaseService _dbService = DatabaseService();
   final DeviceIdService _deviceIdService = DeviceIdService();
   final Uuid _uuid = const Uuid();
+  final gql.GoodReceiptService _graphQLGoodReceiptService =
+      gql.GoodReceiptService();
 
   // Collection names
   static const String _goodReceiptsCollectionName = 'goodreceipts';
@@ -97,16 +100,24 @@ class GoodReceiptService {
     }
   }
 
-  /// Get all good receipts
+  /// Get all good receipts from both local database and server
+  /// If fetchItemsFromServer is true, it will fetch items for each receipt from the server
   Future<List<Map<String, dynamic>>> getGoodReceipts({
     Map<String, dynamic>? filter,
+    bool fetchFromServer = true, // Add parameter to control server fetching
+    bool fetchItemsFromServer = true, // Add parameter to control fetching items
   }) async {
     if (_goodReceiptsCollection == null) {
       await initialize();
     }
 
+    debugPrint('Fetching good receipts (fetchFromServer: $fetchFromServer)');
+    final results = <Map<String, dynamic>>[];
+    final localIds = <String>{}; // Track local IDs to avoid duplicates
+
     try {
-      // Build a query to get all receipts
+      // 1. First get local receipts
+      debugPrint('Fetching receipts from local database');
       final query = QueryBuilder()
           .select(SelectResult.all())
           .from(DataSource.collection(_goodReceiptsCollection!));
@@ -132,19 +143,75 @@ class GoodReceiptService {
       }
 
       final resultSet = await query.execute();
-      final results = <Map<String, dynamic>>[];
 
       await for (final result in resultSet.asStream()) {
         final allResult = result.dictionary(0);
         if (allResult != null) {
           final receipt = allResult.toPlainMap();
           final receiptId = receipt['id'] as String;
+          localIds.add(receiptId);
 
           // Get items for this receipt
           final items = await getGoodReceiptItems(receiptId);
           receipt['items'] = items;
 
           results.add(receipt);
+        }
+      }
+
+      debugPrint('Found ${results.length} local receipts');
+
+      // 2. Then try to get server receipts if requested
+      if (fetchFromServer) {
+        try {
+          debugPrint('Fetching receipts from server');
+          final serverReceipts = await _graphQLGoodReceiptService
+              .getGoodReceipts(filter: filter);
+          debugPrint('Found ${serverReceipts.length} server receipts');
+
+          // Process server receipts
+          for (final serverReceipt in serverReceipts) {
+            final serverId = serverReceipt['id'] as String;
+
+            // Check if we already have this receipt locally
+            if (!localIds.contains(serverId)) {
+              debugPrint(
+                'Adding server receipt $serverId to results (not in local DB)',
+              );
+              
+              // Add server items to the receipt if needed
+              if (fetchItemsFromServer) {
+                try {
+                  final serverItems = await _graphQLGoodReceiptService
+                      .getGoodReceiptItems(serverId);
+                  serverReceipt['items'] = serverItems;
+                } catch (e) {
+                  debugPrint(
+                    'Error fetching items for server receipt $serverId: $e',
+                  );
+                  serverReceipt['items'] = [];
+                }
+              } else {
+                // Just set an empty array for items when not fetching them
+                serverReceipt['items'] = [];
+              }
+
+              // Add to results
+              results.add(serverReceipt);
+
+              // Save to local database for future use
+              try {
+                await _saveServerReceiptLocally(serverReceipt);
+              } catch (e) {
+                debugPrint('Error saving server receipt locally: $e');
+              }
+            } else {
+              debugPrint('Server receipt $serverId already exists locally');
+            }
+          }
+        } catch (e) {
+          debugPrint('Error fetching receipts from server: $e');
+          // Continue with local results only
         }
       }
 
@@ -155,7 +222,127 @@ class GoodReceiptService {
     }
   }
 
-  /// Create a new good receipt
+  /// Save a server receipt to the local database
+  Future<void> _saveServerReceiptLocally(
+    Map<String, dynamic> serverReceipt,
+  ) async {
+    if (_goodReceiptsCollection == null) {
+      await initialize();
+    }
+
+    try {
+      final id = serverReceipt['id'] as String;
+
+      // Check if receipt already exists locally
+      final existingDoc = await _goodReceiptsCollection!.document(id);
+      if (existingDoc != null) {
+        debugPrint('Receipt $id already exists locally, updating');
+        // Update existing document
+        final mutableDoc = existingDoc.toMutable();
+
+        // Update all fields from server receipt
+        serverReceipt.forEach((key, value) {
+          if (key != 'items') {
+            // Handle items separately
+            mutableDoc.setValue(value, key: key);
+          }
+        });
+
+        // Mark as synced with server
+        mutableDoc.setValue(true, key: 'syncedWithServer');
+
+        await _goodReceiptsCollection!.saveDocument(mutableDoc);
+      } else {
+        debugPrint('Creating new local receipt from server data: $id');
+        // Create new document
+        final doc = MutableDocument.withId(id);
+
+        // Add all properties from server receipt
+        serverReceipt.forEach((key, value) {
+          if (key != 'items') {
+            // Handle items separately
+            doc.setValue(value, key: key);
+          }
+        });
+
+        // Mark as synced with server
+        doc.setValue(true, key: 'syncedWithServer');
+
+        await _goodReceiptsCollection!.saveDocument(doc);
+      }
+
+      // Handle items if present
+      if (serverReceipt.containsKey('items') &&
+          serverReceipt['items'] is List) {
+        final items = serverReceipt['items'] as List;
+        for (final item in items) {
+          if (item is Map<String, dynamic>) {
+            await _saveServerItemLocally(item, id);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error saving server receipt locally: $e');
+      rethrow;
+    }
+  }
+
+  /// Save a server item to the local database
+  Future<void> _saveServerItemLocally(
+    Map<String, dynamic> serverItem,
+    String receiptId,
+  ) async {
+    if (_goodReceiptItemsCollection == null) {
+      await initialize();
+    }
+
+    try {
+      final id = serverItem['id'] as String;
+
+      // Check if item already exists locally
+      final existingDoc = await _goodReceiptItemsCollection!.document(id);
+      if (existingDoc != null) {
+        debugPrint('Item $id already exists locally, updating');
+        // Update existing document
+        final mutableDoc = existingDoc.toMutable();
+
+        // Update all fields from server item
+        serverItem.forEach((key, value) {
+          mutableDoc.setValue(value, key: key);
+        });
+
+        // Ensure receipt ID is set correctly
+        mutableDoc.setValue(receiptId, key: 'goodReceiptId');
+
+        // Mark as synced with server
+        mutableDoc.setValue(true, key: 'syncedWithServer');
+
+        await _goodReceiptItemsCollection!.saveDocument(mutableDoc);
+      } else {
+        debugPrint('Creating new local item from server data: $id');
+        // Create new document
+        final doc = MutableDocument.withId(id);
+
+        // Add all properties from server item
+        serverItem.forEach((key, value) {
+          doc.setValue(value, key: key);
+        });
+
+        // Ensure receipt ID is set correctly
+        doc.setValue(receiptId, key: 'goodReceiptId');
+
+        // Mark as synced with server
+        doc.setValue(true, key: 'syncedWithServer');
+
+        await _goodReceiptItemsCollection!.saveDocument(doc);
+      }
+    } catch (e) {
+      debugPrint('Error saving server item locally: $e');
+      // Continue with other items
+    }
+  }
+
+  /// Create a new good receipt locally and on the server
   Future<Map<String, dynamic>> createGoodReceipt({
     required String name,
     required int status,
@@ -168,8 +355,38 @@ class GoodReceiptService {
     }
 
     try {
-      final now = DateTime.now().toIso8601String();
-      final id = _uuid.v4();
+      // First create the receipt on the server
+      Map<String, dynamic>? serverReceipt;
+      late String id;
+      late String createdAt;
+      late String updatedAt;
+      bool syncedWithServer = false;
+
+      try {
+        // Create receipt on the server
+        serverReceipt = await _graphQLGoodReceiptService.createGoodReceipt(
+          name: name,
+          status: status,
+          supplierCode: supplierCode,
+          whs: whs,
+          delDate: delDate,
+        );
+
+        // Get ID and timestamps from server
+        id = serverReceipt['id'] as String;
+        createdAt = serverReceipt['createdAt'] as String;
+        updatedAt = serverReceipt['updatedAt'] as String;
+        syncedWithServer = true;
+
+        debugPrint('Good receipt created on server: $id');
+      } catch (serverError) {
+        // If server creation fails, generate a local ID and timestamps
+        debugPrint('Failed to create receipt on server: $serverError');
+        id = _uuid.v4();
+        final now = DateTime.now().toIso8601String();
+        createdAt = now;
+        updatedAt = now;
+      }
 
       final goodReceipt = {
         'id': id,
@@ -178,8 +395,9 @@ class GoodReceiptService {
         'supplierCode': supplierCode,
         'whs': whs,
         'delDate': delDate,
-        'createdAt': now,
-        'updatedAt': now,
+        'createdAt': createdAt,
+        'updatedAt': updatedAt,
+        'syncedWithServer': syncedWithServer,
       };
 
       // Create a document
@@ -192,7 +410,7 @@ class GoodReceiptService {
 
       // Save the document to the collection
       await _goodReceiptsCollection!.saveDocument(doc);
-      debugPrint('Good receipt created: $id');
+      debugPrint('Good receipt created locally: $id');
 
       // Add empty items list for return value
       goodReceipt['items'] = [];
@@ -211,14 +429,30 @@ class GoodReceiptService {
     }
 
     try {
+      debugPrint('Getting good receipt with ID: $id');
       final doc = await _goodReceiptsCollection!.document(id);
-      if (doc == null) return null;
+      if (doc == null) {
+        debugPrint('No receipt document found with ID: $id');
+        return null;
+      }
 
       final receipt = doc.toPlainMap();
+      debugPrint('Found receipt: ${receipt['name']}');
 
       // Get items for this receipt
-      final items = await getGoodReceiptItems(id);
-      receipt['items'] = items;
+      final allItems = await getGoodReceiptItems(id);
+      debugPrint('Found ${allItems.length} items for receipt $id');
+      
+      // Filter out deleted items
+      final nonDeletedItems = allItems.where((item) => item['deleted'] != true).toList();
+      debugPrint('After filtering, ${nonDeletedItems.length} non-deleted items remain');
+      
+      // Log each non-deleted item for debugging
+      for (int i = 0; i < nonDeletedItems.length; i++) {
+        debugPrint('Non-deleted item $i: ${nonDeletedItems[i]['itemCode']} - ${nonDeletedItems[i]['name']}');
+      }
+      
+      receipt['items'] = nonDeletedItems;
 
       return receipt;
     } catch (e) {
@@ -314,17 +548,23 @@ class GoodReceiptService {
     }
 
     try {
+      debugPrint('Querying items for receipt ID: $receiptId');
       final query = QueryBuilder()
           .select(SelectResult.all())
           .from(DataSource.collection(_goodReceiptItemsCollection!));
 
       // Add filter for specific receipt if provided
       if (receiptId.isNotEmpty) {
-        query.where(
-          Expression.property(
-            'goodReceiptId',
-          ).equalTo(Expression.string(receiptId)),
-        );
+        // Create a compound expression to filter by receipt ID and exclude deleted items
+        final receiptIdExpr = Expression.property('goodReceiptId').equalTo(Expression.string(receiptId));
+        
+        // Add condition to filter out deleted items
+        final notDeletedExpr = Expression.property('deleted').notEqualTo(Expression.boolean(true));
+        
+        // Combine the expressions with AND
+        query.where(receiptIdExpr.and(notDeletedExpr));
+        
+        debugPrint('Added filter for goodReceiptId = $receiptId and not deleted');
       }
 
       final resultSet = await query.execute();
@@ -333,10 +573,13 @@ class GoodReceiptService {
       await for (final result in resultSet.asStream()) {
         final allResult = result.dictionary(0);
         if (allResult != null) {
-          results.add(allResult.toPlainMap());
+          final item = allResult.toPlainMap();
+          results.add(item);
+          debugPrint('Found item: ${item['itemCode']} - ${item['name']}');
         }
       }
 
+      debugPrint('Found ${results.length} items for receipt $receiptId');
       return results;
     } catch (e) {
       debugPrint('Error getting good receipt items: $e');
@@ -344,7 +587,7 @@ class GoodReceiptService {
     }
   }
 
-  /// Create a good receipt item
+  /// Create a good receipt item locally
   Future<Map<String, dynamic>> createGoodReceiptItem({
     required String goodReceiptId,
     required String itemCode,
@@ -363,16 +606,21 @@ class GoodReceiptService {
       final id = _uuid.v4();
       final actualDeviceId = deviceId ?? await _deviceIdService.getDeviceId();
 
+      // Create the item with proper types
       final item = {
         'id': id,
         'goodReceiptId': goodReceiptId,
         'itemCode': itemCode,
         'name': name,
-        'qty': qty,
-        'price': price,
+        'qty': qty,  // Ensure this is a double
+        'price': price,  // Ensure this is a double
         'uom': uom,
         'deviceId': actualDeviceId,
+        'syncedWithServer': false,
       };
+      
+      // Debug log to verify data types
+      debugPrint('Creating item with qty type: ${qty.runtimeType}, price type: ${price.runtimeType}');
 
       // Create a document
       final doc = MutableDocument.withId(id);
@@ -384,7 +632,15 @@ class GoodReceiptService {
 
       // Save the document to the collection
       await _goodReceiptItemsCollection!.saveDocument(doc);
-      debugPrint('Good receipt item created: $id');
+      debugPrint('Good receipt item created locally: $id for receipt: $goodReceiptId');
+      
+      // Verify the item was saved by retrieving it
+      final savedDoc = await _goodReceiptItemsCollection!.document(id);
+      if (savedDoc != null) {
+        debugPrint('Successfully verified item was saved with ID: $id');
+      } else {
+        debugPrint('WARNING: Could not verify item was saved with ID: $id');
+      }
 
       // Update the receipt's updatedAt timestamp
       final receiptDoc = await _goodReceiptsCollection!.document(goodReceiptId);
@@ -394,6 +650,10 @@ class GoodReceiptService {
           DateTime.now().toIso8601String(),
           key: 'updatedAt',
         );
+
+        // Mark receipt as having unsynchronized changes
+        mutableReceiptDoc.setValue(false, key: 'syncedWithServer');
+
         await _goodReceiptsCollection!.saveDocument(mutableReceiptDoc);
       }
 
@@ -483,10 +743,36 @@ class GoodReceiptService {
 
       final item = doc.toPlainMap();
       final goodReceiptId = item['goodReceiptId'] as String;
-
-      // Delete the item
-      await _goodReceiptItemsCollection!.deleteDocument(doc);
-      debugPrint('Good receipt item deleted: $id');
+      
+      // Check if the item has been synced with the server
+      final bool syncedWithServer = item['syncedWithServer'] == true;
+      
+      if (syncedWithServer) {
+        // If the item is already on the server, mark it as deleted instead of actually deleting it
+        // This way we can track it and delete it from the server during the next sync
+        final mutableItemDoc = doc.toMutable();
+        mutableItemDoc.setValue(true, key: 'deleted');
+        mutableItemDoc.setValue(false, key: 'syncedWithServer'); // Need to sync this deletion
+        mutableItemDoc.setValue(DateTime.now().toIso8601String(), key: 'deletedAt');
+        
+        // IMPORTANT: Store the server ID if it exists (this is the ID we need to delete on the server)
+        // First check if we already have a serverId stored
+        if (item.containsKey('serverId') && item['serverId'] != null) {
+          // Keep the existing serverId
+          debugPrint('Keeping existing server ID ${item['serverId']} for deleted item');
+        } else if (item.containsKey('id')) {
+          // If no serverId but we have an id, use that (for items created on server)
+          mutableItemDoc.setValue(item['id'], key: 'serverId');
+          debugPrint('Stored server ID ${item['id']} for deleted item');
+        }
+        
+        await _goodReceiptItemsCollection!.saveDocument(mutableItemDoc);
+        debugPrint('Good receipt item marked as deleted: $id');
+      } else {
+        // If the item hasn't been synced with the server yet, we can safely delete it
+        await _goodReceiptItemsCollection!.deleteDocument(doc);
+        debugPrint('Good receipt item deleted (was never synced): $id');
+      }
 
       // Update the receipt's updatedAt timestamp
       final receiptDoc = await _goodReceiptsCollection!.document(goodReceiptId);
@@ -673,6 +959,398 @@ class GoodReceiptService {
     } catch (e) {
       debugPrint('Error getting suppliers: $e');
       rethrow;
+    }
+  }
+
+  /// Fetch good receipts only from the server
+  /// This is used by the goods receipt list page
+  /// If fetchItems is true, it will fetch complete receipts with items
+  /// If fetchItems is false (default), it will fetch only headers for efficiency
+  Future<List<Map<String, dynamic>>> fetchServerGoodReceipts({bool fetchItems = false}) async {
+    debugPrint('Fetching good receipts from server only (fetchItems: $fetchItems)');
+    try {
+      // Initialize if needed
+      await initialize();
+
+      // Fetch from server - use optimized query for list view
+      final List<Map<String, dynamic>> serverReceipts;
+      if (fetchItems) {
+        // Fetch complete receipts with items (slower, more data)
+        serverReceipts = await _graphQLGoodReceiptService.getGoodReceipts();
+        debugPrint('Found ${serverReceipts.length} server good receipts with items');
+      } else {
+        // Fetch only headers (faster, less data) - better for list views
+        serverReceipts = await _graphQLGoodReceiptService.getGoodReceiptHeaders();
+        debugPrint('Found ${serverReceipts.length} server good receipt headers');
+        
+        // Add empty items array to each receipt
+        for (final receipt in serverReceipts) {
+          receipt['items'] = [];
+        }
+      }
+
+      // If we have receipts, truncate local database and save new ones
+      debugPrint('Updating local database with server data...');
+      await _truncateLocalGoodReceipts();
+
+      // Save server receipts to local database in the background
+      _saveServerReceiptsInBackground(serverReceipts);
+
+      return serverReceipts;
+    } catch (e) {
+      debugPrint('Error fetching good receipts from server: $e');
+      rethrow;
+    }
+  }
+
+  /// Truncate local good receipts collection
+  /// This is called when server returns empty list
+  Future<void> _truncateLocalGoodReceipts() async {
+    try {
+      if (_goodReceiptsCollection == null) {
+        await initialize();
+      }
+
+      // Get all local receipts
+      final query = QueryBuilder()
+          .select(SelectResult.expression(Meta.id))
+          .from(DataSource.collection(_goodReceiptsCollection!));
+
+      final resultSet = await query.execute();
+      int deletedCount = 0;
+
+      await for (final result in resultSet.asStream()) {
+        final id = result.string(0);
+        if (id != null) {
+          // Delete the document by ID
+          final doc = MutableDocument.withId(id);
+          await _goodReceiptsCollection!.deleteDocument(doc);
+          deletedCount++;
+        }
+      }
+
+      debugPrint('Truncated $deletedCount local good receipts');
+    } catch (e) {
+      debugPrint('Error truncating local good receipts: $e');
+      // Don't rethrow as this is a cleanup operation
+    }
+  }
+
+  /// Save server receipts to local database in the background
+  /// This is done asynchronously to not block the UI
+  Future<void> _saveServerReceiptsInBackground(
+    List<Map<String, dynamic>> serverReceipts,
+  ) async {
+    try {
+      for (final serverReceipt in serverReceipts) {
+        await _saveServerReceiptLocally(serverReceipt);
+      }
+      debugPrint(
+        'Finished saving ${serverReceipts.length} server receipts to local database',
+      );
+    } catch (e) {
+      debugPrint('Error saving server receipts to local database: $e');
+      // Don't rethrow as this is a background operation
+    }
+  }
+
+  /// Fetch a single good receipt with all its items from the server
+  Future<Map<String, dynamic>?> fetchSingleGoodReceiptWithItems(String id) async {
+    debugPrint('Fetching single good receipt with items from server: $id');
+    try {
+      // Initialize if needed
+      await initialize();
+      
+      // Fetch the receipt with items from server
+      final receipts = await _graphQLGoodReceiptService.getGoodReceipts(
+        filter: {'id': id},
+      );
+      
+      if (receipts.isEmpty) {
+        debugPrint('Receipt not found on server: $id');
+        return null;
+      }
+      
+      final receipt = receipts.first;
+      
+      // Save to local database in background
+      _saveServerReceiptLocally(receipt).then((_) {
+        debugPrint('Saved receipt $id from server to local database');
+      }).catchError((e) {
+        debugPrint('Error saving receipt $id from server to local database: $e');
+      });
+      
+      return receipt;
+    } catch (e) {
+      debugPrint('Error fetching single receipt from server: $e');
+      rethrow;
+    }
+  }
+  
+  /// Push local changes for a good receipt to the server
+  Future<bool> pushGoodReceiptToServer(String receiptId) async {
+    if (_goodReceiptsCollection == null ||
+        _goodReceiptItemsCollection == null) {
+      await initialize();
+    }
+
+    debugPrint('Starting push to server for receipt: $receiptId');
+
+    try {
+      // Get the receipt from local database
+      final receiptDoc = await _goodReceiptsCollection!.document(receiptId);
+      if (receiptDoc == null) {
+        debugPrint(
+          'Error: Good receipt not found in local database: $receiptId',
+        );
+        throw Exception('Good receipt not found: $receiptId');
+      }
+
+      final receipt = receiptDoc.toPlainMap();
+      debugPrint('Found local receipt: ${receipt.toString()}');
+
+      // Check if the receipt exists on the server
+      bool receiptExistsOnServer = receipt['syncedWithServer'] == true;
+      debugPrint('Receipt exists on server: $receiptExistsOnServer');
+
+      // Variable to store the server receipt ID (may be different from local ID)
+      String serverReceiptId = receiptId;
+
+      if (!receiptExistsOnServer) {
+        // Create the receipt on the server
+        try {
+          debugPrint(
+            'Attempting to create receipt on server with: name=${receipt['name']}, status=${receipt['status']}, supplierCode=${receipt['supplierCode']}, whs=${receipt['whs']}',
+          );
+
+          final serverReceipt = await _graphQLGoodReceiptService
+              .createGoodReceipt(
+                name: receipt['name'] as String,
+                status: receipt['status'] as int,
+                supplierCode: receipt['supplierCode'] as String,
+                whs: receipt['whs'] as String,
+                delDate: receipt['delDate'] as String?,
+              );
+
+          debugPrint('Server receipt created: ${serverReceipt.toString()}');
+
+          // Store the server receipt ID for use with items
+          serverReceiptId = serverReceipt['id'] as String;
+          debugPrint('Using server receipt ID: $serverReceiptId for items');
+
+          // Update the local receipt with the server ID if different
+          if (serverReceiptId != receiptId) {
+            debugPrint(
+              'Server ID ($serverReceiptId) different from local ID ($receiptId)',
+            );
+            // Store server ID in the local receipt for reference
+            final mutableReceiptDoc = receiptDoc.toMutable();
+            mutableReceiptDoc.setValue(true, key: 'syncedWithServer');
+            mutableReceiptDoc.setValue(serverReceiptId, key: 'serverId');
+            await _goodReceiptsCollection!.saveDocument(mutableReceiptDoc);
+          } else {
+            // Mark as synced
+            debugPrint('Marking receipt as synced with server');
+            final mutableReceiptDoc = receiptDoc.toMutable();
+            mutableReceiptDoc.setValue(true, key: 'syncedWithServer');
+            await _goodReceiptsCollection!.saveDocument(mutableReceiptDoc);
+          }
+
+          receiptExistsOnServer = true;
+        } catch (e) {
+          debugPrint('Error creating receipt on server: $e');
+          return false;
+        }
+      } else {
+        // If receipt already exists on server, check if we have a stored server ID
+        if (receipt.containsKey('serverId') && receipt['serverId'] != null) {
+          serverReceiptId = receipt['serverId'] as String;
+          debugPrint('Using stored server ID: $serverReceiptId for items');
+        }
+      }
+
+      // Get all items for this receipt, including deleted ones that need to be synced
+      // We need to use a special query to include deleted items
+      final query = QueryBuilder()
+          .select(SelectResult.all())
+          .from(DataSource.collection(_goodReceiptItemsCollection!));
+      
+      // Add filter for specific receipt
+      final receiptIdExpr = Expression.property('goodReceiptId').equalTo(Expression.string(receiptId));
+      query.where(receiptIdExpr);
+      
+      final resultSet = await query.execute();
+      final items = <Map<String, dynamic>>[];
+      
+      await for (final result in resultSet.asStream()) {
+        final allResult = result.dictionary(0);
+        if (allResult != null) {
+          final item = allResult.toPlainMap();
+          items.add(item);
+        }
+      }
+      
+      debugPrint('Found ${items.length} items to push to server (including deleted items)');
+
+      // Push each unsynchronized item to the server
+      int successCount = 0;
+      int deletedCount = 0;
+      
+      // Process all items in two passes: first handle deletions, then handle additions/updates
+      // This ensures we process all deletions first
+      
+      // PASS 1: Process all deleted items
+      debugPrint('PASS 1: Processing deleted items');
+      for (final item in items) {
+        final bool isDeleted = item['deleted'] == true;
+        
+        if (!isDeleted) continue; // Skip non-deleted items in this pass
+        
+        debugPrint('Processing deleted item ${item['id']} - ${item['itemCode']}');
+        
+        // Log all keys in the item for debugging
+        for (final key in item.keys) {
+          debugPrint('  $key: ${item[key]}');
+        }
+        
+        // Check if this item has a server ID
+        if (item.containsKey('serverId') && item['serverId'] != null) {
+          final String serverItemId = item['serverId'] as String;
+          debugPrint('Attempting to delete item $serverItemId from server');
+          
+          try {
+            // Call the server API to delete the item
+            final deleteSuccess = await _graphQLGoodReceiptService.deleteGoodReceiptItem(serverItemId);
+            
+            if (deleteSuccess) {
+              debugPrint('Item with server ID $serverItemId successfully deleted from server');
+              deletedCount++;
+              
+              // Now we can safely delete it from local database
+              final itemDoc = await _goodReceiptItemsCollection!.document(item['id']);
+              if (itemDoc != null) {
+                await _goodReceiptItemsCollection!.deleteDocument(itemDoc);
+                debugPrint('Deleted item ${item['id']} from local database after server sync');
+              }
+            } else {
+              debugPrint('Failed to delete item with server ID $serverItemId from server');
+              // Keep the item marked as deleted but not synced so we can try again later
+            }
+          } catch (deleteError) {
+            debugPrint('Error deleting item from server: $deleteError');
+          }
+        } else {
+          // Item was marked for deletion but has no server ID, just delete locally
+          final itemDoc = await _goodReceiptItemsCollection!.document(item['id']);
+          if (itemDoc != null) {
+            await _goodReceiptItemsCollection!.deleteDocument(itemDoc);
+            debugPrint('Deleted item ${item['id']} from local database (no server ID)');
+          }
+        }
+      }
+      
+      // PASS 2: Process all non-deleted items that need syncing
+      debugPrint('PASS 2: Processing non-deleted items');
+      for (final item in items) {
+        final bool isDeleted = item['deleted'] == true;
+        final bool needsSync = item['syncedWithServer'] != true;
+        
+        if (isDeleted) continue; // Skip deleted items in this pass
+        if (!needsSync) continue; // Skip already synced items
+        
+        debugPrint('Processing non-deleted item ${item['id']} - ${item['itemCode']} for sync');
+        
+        try {
+          // Regular item creation/update
+          debugPrint(
+            'Pushing item ${item['id']} to server with receipt ID: $serverReceiptId',
+          );
+          // Create the item on the server using the SERVER receipt ID
+          final serverItem = await _graphQLGoodReceiptService
+              .createGoodReceiptItem(
+                goodReceiptId: serverReceiptId, // Use server receipt ID here
+                itemCode: item['itemCode'] as String,
+                name: item['name'] as String,
+                qty: (item['qty'] as num).toDouble(),
+                price: (item['price'] as num).toDouble(),
+                uom: item['uom'] as String,
+                deviceId: item['deviceId'] as String?,
+              );
+
+          debugPrint(
+            'Item successfully pushed to server: ${serverItem.toString()}',
+          );
+          successCount++;
+
+          // Mark the item as synced
+          final itemDoc = await _goodReceiptItemsCollection!.document(
+            item['id'],
+          );
+          if (itemDoc != null) {
+            final mutableItemDoc = itemDoc.toMutable();
+            mutableItemDoc.setValue(true, key: 'syncedWithServer');
+            mutableItemDoc.setValue(serverItem['id'], key: 'serverId');
+            await _goodReceiptItemsCollection!.saveDocument(mutableItemDoc);
+          }
+        } catch (e) {
+          debugPrint('Error processing item with server: $e');
+          // Continue with other items even if one fails
+        }
+      }
+      
+      debugPrint('Successfully pushed $successCount items to server and deleted $deletedCount items');
+
+      if (successCount == 0 && deletedCount == 0 && items.isNotEmpty) {
+        debugPrint('Warning: No items were successfully pushed to or deleted from the server');
+      }
+
+      // Update the receipt as synced
+      final updatedReceiptDoc = await _goodReceiptsCollection!.document(
+        receiptId,
+      );
+      if (updatedReceiptDoc != null) {
+        final mutableReceiptDoc = updatedReceiptDoc.toMutable();
+        mutableReceiptDoc.setValue(true, key: 'syncedWithServer');
+        await _goodReceiptsCollection!.saveDocument(mutableReceiptDoc);
+      }
+
+      return true;
+    } catch (e) {
+      debugPrint('Error pushing good receipt to server: $e');
+      return false;
+    }
+  }
+  /// Check if a good receipt has unsynchronized changes
+  Future<bool> hasUnsynchronizedChanges(String receiptId) async {
+    if (_goodReceiptsCollection == null ||
+        _goodReceiptItemsCollection == null) {
+      await initialize();
+    }
+
+    try {
+      // Check if the receipt itself is unsynchronized
+      final receiptDoc = await _goodReceiptsCollection!.document(receiptId);
+      if (receiptDoc == null) {
+        return false;
+      }
+
+      final receipt = receiptDoc.toPlainMap();
+      if (receipt['syncedWithServer'] != true) {
+        return true;
+      }
+
+      // Check if any items are unsynchronized
+      final items = await getGoodReceiptItems(receiptId);
+      for (final item in items) {
+        if (item['syncedWithServer'] != true) {
+          return true;
+        }
+      }
+
+      return false;
+    } catch (e) {
+      debugPrint('Error checking for unsynchronized changes: $e');
+      return false;
     }
   }
 }

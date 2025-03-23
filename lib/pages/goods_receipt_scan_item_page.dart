@@ -110,8 +110,10 @@ class _GoodsReceiptScanItemPageState extends State<GoodsReceiptScanItemPage> {
 
       debugPrint('Added item with device ID: $deviceId');
 
-      // Call the callback to update the UI
+      // Call the callback to update the UI immediately
+      debugPrint('Calling onItemAdded callback with item: ${addedItem.toString()}');
       widget.onItemAdded(addedItem);
+      
 
       // Clear the input field
       _barcodeController.clear();

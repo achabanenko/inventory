@@ -19,6 +19,8 @@ class GoodsReceiptDetailsPage extends StatefulWidget {
 class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
   final GoodReceiptService _goodReceiptService = GoodReceiptService();
   bool _isLoading = true;
+  bool _isPushing = false;
+  bool _hasPendingChanges = false;
   GoodReceipt? _receipt;
   String? _errorMessage;
 
@@ -27,33 +29,217 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
     super.initState();
     _fetchGoodReceipt();
   }
+  
+  // This method is no longer used as we directly set _hasPendingChanges when we detect changes
+
+  Future<void> _pushToServer() async {
+    if (_receipt == null) return;
+    
+    try {
+      setState(() {
+        _isPushing = true;
+      });
+      
+      // IMPORTANT: We'll keep track of the current UI state and maintain it
+      // This ensures deleted items don't reappear
+      final currentItems = List<GoodReceiptItem>.from(_receipt!.items);
+      debugPrint('PUSH DEBUG: Current UI has ${currentItems.length} items before push');
+      
+      // Push to server
+      final bool success = await _goodReceiptService.pushGoodReceiptToServer(_receipt!.id);
+      
+      // Mark the push as complete, but KEEP THE CURRENT UI STATE
+      setState(() {
+        _isPushing = false;
+        _hasPendingChanges = false;
+      });
+      
+      if (mounted) {
+        String message = success 
+          ? 'Successfully pushed to server'
+          : 'Failed to push to server';
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message))
+        );
+      }
+      
+    } catch (e) {
+      setState(() {
+        _isPushing = false;
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error pushing to server: $e'))
+        );
+      }
+    }
+  }
 
   Future<void> _fetchGoodReceipt() async {
     try {
+      debugPrint('Starting to fetch good receipt ${widget.receiptId}');
       setState(() {
         _isLoading = true;
         _errorMessage = null;
       });
 
-      // Use a filter to get a specific good receipt by ID
-      final receiptsData = await _goodReceiptService.getGoodReceipts(
-        filter: {'id': widget.receiptId},
-      );
-
-      if (receiptsData.isEmpty) {
-        setState(() {
-          _errorMessage = 'Good receipt not found';
-          _isLoading = false;
-        });
-        return;
+      // Save the current receipt items if we have any (to preserve local changes)
+      List<GoodReceiptItem>? currentItems;
+      if (_receipt != null && _receipt!.items.isNotEmpty) {
+        currentItems = List.from(_receipt!.items);
+        debugPrint('Saved ${currentItems.length} current items before refresh');
       }
 
-      final receipt = GoodReceipt.fromJson(receiptsData.first);
+      // Get the local items first to check for deleted items
+      final localItems = await _goodReceiptService.getGoodReceiptItems(widget.receiptId);
+      final Set<String> locallyDeletedItemIds = {};
+      
+      // Identify locally deleted items
+      for (var item in localItems) {
+        if (item['deleted'] == true && item['serverId'] != null) {
+          locallyDeletedItemIds.add(item['serverId'] as String);
+          debugPrint('FETCH DEBUG: Found locally deleted item with server ID: ${item['serverId']}');
+        }
+      }
+      
+      // Try to fetch from server first
+      debugPrint('Fetching receipt from server first');
+      Map<String, dynamic>? serverReceiptData;
+      try {
+        serverReceiptData = await _goodReceiptService.fetchSingleGoodReceiptWithItems(
+          widget.receiptId,
+        );
+      } catch (serverError) {
+        debugPrint('Error fetching from server: $serverError');
+        // Continue to local fetch
+      }
+      
+      if (serverReceiptData != null) {
+        // Use the server data as the base
+        var receipt = GoodReceipt.fromJson(serverReceiptData);
+        debugPrint('Server receipt found with ${receipt.items.length} items');
+        
+        // Filter out items that have been deleted locally
+        List<GoodReceiptItem> filteredServerItems = receipt.items.where((item) {
+          // Check if this server item has been deleted locally
+          bool isDeleted = locallyDeletedItemIds.contains(item.id);
+          if (isDeleted) {
+            debugPrint('FETCH DEBUG: Filtering out server item ${item.id} - ${item.itemCode} because it was deleted locally');
+          }
+          return !isDeleted;
+        }).toList();
+        
+        debugPrint('After filtering deleted items, server has ${filteredServerItems.length} items');
+        
+        // Create a new receipt with the filtered items
+        receipt = GoodReceipt(
+          id: receipt.id,
+          name: receipt.name,
+          status: receipt.status,
+          supplierCode: receipt.supplierCode,
+          whs: receipt.whs,
+          delDate: receipt.delDate,
+          createdAt: receipt.createdAt,
+          updatedAt: receipt.updatedAt,
+          items: filteredServerItems,
+        );
+        
+        // Log all remaining items from the server
+        for (int i = 0; i < receipt.items.length; i++) {
+          debugPrint('Filtered server item $i: ${receipt.items[i].itemCode} - ${receipt.items[i].name}');
+        }
 
-      setState(() {
-        _receipt = receipt;
-        _isLoading = false;
-      });
+        // Check if we need to merge with local items
+        if (currentItems != null) {
+          // Create a new list for all items (we can't modify receipt.items directly as it's final)
+          List<GoodReceiptItem> mergedItems = [];
+          
+          // First, add all non-deleted items from the server
+          mergedItems.addAll(receipt.items.where((item) => item.deleted != true));
+          
+          // Find items that exist locally but not on the server
+          final Set<String> serverItemIds = receipt.items.map((item) => item.id).toSet();
+          
+          // Get local-only items that are not marked as deleted
+          final List<GoodReceiptItem> localOnlyItems = currentItems
+              .where((item) => !serverItemIds.contains(item.id) && item.deleted != true)
+              .toList();
+          
+          if (localOnlyItems.isNotEmpty) {
+            debugPrint('Found ${localOnlyItems.length} items that exist locally but not on server');
+            // Add the local-only items to our merged list
+            mergedItems.addAll(localOnlyItems);
+            setState(() {
+              _hasPendingChanges = true; // Mark that we have pending changes to push
+            });
+          }
+          
+          // Create a new receipt with the merged items list
+          receipt = GoodReceipt(
+            id: receipt.id,
+            name: receipt.name,
+            status: receipt.status,
+            supplierCode: receipt.supplierCode,
+            whs: receipt.whs,
+            delDate: receipt.delDate,
+            createdAt: receipt.createdAt,
+            updatedAt: receipt.updatedAt,
+            items: mergedItems,
+          );
+        }
+        
+        setState(() {
+          _receipt = receipt;
+          _isLoading = false;
+        });
+      } else {
+        // If server fetch fails, fall back to local database
+        debugPrint('No server receipt found, trying local database');
+        final localReceipt = await _goodReceiptService.getGoodReceipt(widget.receiptId);
+        
+        if (localReceipt == null) {
+          debugPrint('Receipt not found locally either');
+          setState(() {
+            _errorMessage = 'Good receipt not found';
+            _isLoading = false;
+          });
+          return;
+        }
+        
+        // Get the local data
+        final rawReceipt = GoodReceipt.fromJson(localReceipt);
+        debugPrint('Local receipt found with ${rawReceipt.items.length} items');
+        
+        // Filter out any items that are marked as deleted
+        final nonDeletedItems = rawReceipt.items.where((item) => item.deleted != true).toList();
+        debugPrint('After filtering deleted items, local receipt has ${nonDeletedItems.length} items');
+        
+        // Create a new receipt with only non-deleted items
+        final receipt = GoodReceipt(
+          id: rawReceipt.id,
+          name: rawReceipt.name,
+          status: rawReceipt.status,
+          supplierCode: rawReceipt.supplierCode,
+          whs: rawReceipt.whs,
+          delDate: rawReceipt.delDate,
+          createdAt: rawReceipt.createdAt,
+          updatedAt: rawReceipt.updatedAt,
+          items: nonDeletedItems,
+        );
+        
+        setState(() {
+          _receipt = receipt;
+          _isLoading = false;
+          _hasPendingChanges = true; // Mark as having pending changes since server doesn't have this data
+        });
+      }
+      
+      // Force a rebuild of the UI
+      if (mounted) {
+        setState(() {});
+      }
     } catch (e) {
       setState(() {
         _errorMessage = 'Failed to fetch good receipt: $e';
@@ -101,6 +287,40 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
         _isLoading = true;
       });
 
+      // First remove the item from the local UI immediately
+      if (_receipt != null) {
+        setState(() {
+          // Find the item index
+          final itemIndex = _receipt!.items.indexWhere((item) => item.id == itemId);
+          if (itemIndex != -1) {
+            // Store the deleted item temporarily in case we need to restore it
+            final deletedItem = _receipt!.items[itemIndex];
+            debugPrint('Removing item ${deletedItem.itemCode} from UI');
+            
+            // Create a new list without the deleted item (since we can't modify the final list)
+            final newItems = List<GoodReceiptItem>.from(_receipt!.items);
+            newItems.removeAt(itemIndex);
+            
+            // Create a new receipt with the updated items list
+            _receipt = GoodReceipt(
+              id: _receipt!.id,
+              name: _receipt!.name,
+              status: _receipt!.status,
+              supplierCode: _receipt!.supplierCode,
+              whs: _receipt!.whs,
+              delDate: _receipt!.delDate,
+              createdAt: _receipt!.createdAt,
+              updatedAt: _receipt!.updatedAt,
+              items: newItems,
+            );
+            
+            // Mark that we have pending changes
+            _hasPendingChanges = true;
+          }
+        });
+      }
+
+      // Then delete from the database
       final success = await _goodReceiptService.deleteGoodReceiptItem(itemId);
 
       if (success) {
@@ -109,8 +329,13 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
             const SnackBar(content: Text('Item deleted successfully')),
           );
         }
-        await _fetchGoodReceipt(); // This will reset _isLoading to false when complete
+        
+        // No need to fetch the receipt again as we've already updated the UI
+        setState(() {
+          _isLoading = false;
+        });
       } else {
+        // If the database delete failed, we should refresh to get the correct state
         setState(() {
           _isLoading = false;
         });
@@ -119,6 +344,8 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
             const SnackBar(content: Text('Failed to delete item')),
           );
         }
+        // Refresh to get the correct state
+        await _fetchGoodReceipt();
       }
     } catch (e) {
       setState(() {
@@ -129,26 +356,98 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
           context,
         ).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
+      // Refresh to get the correct state in case of error
+      await _fetchGoodReceipt();
     }
   }
 
   Future<void> _navigateToScanItemPage() async {
     if (_receipt == null) return;
 
+    // Store the current items count for debugging
+    final int initialItemCount = _receipt!.items.length;
+    debugPrint('Before scanning: Receipt has $initialItemCount items');
+
+    // Track newly added items
+    final List<GoodReceiptItem> newlyAddedItems = [];
+
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder:
-            (context) => GoodsReceiptScanItemPage(
-              goodReceiptId: _receipt!.id,
-              onItemAdded: (Map<String, dynamic> item) {
-                // This callback will be called when an item is added in the scan page
-                // Refresh the receipt details to show the new item
-                _fetchGoodReceipt();
-              },
-            ),
+        builder: (context) => GoodsReceiptScanItemPage(
+          goodReceiptId: _receipt!.id,
+          onItemAdded: (Map<String, dynamic> item) {
+            debugPrint('Item added callback received: ${item.toString()}');
+            try {
+              // Convert the item to a GoodReceiptItem and add it to the current receipt
+              final newItem = GoodReceiptItem.fromJson(item);
+              
+              // Keep track of newly added items
+              newlyAddedItems.add(newItem);
+              
+              // Update the UI immediately with the new item
+              setState(() {
+                // Add the new item to the existing receipt
+                _receipt!.items.add(newItem);
+                _hasPendingChanges = true;
+              });
+              
+              debugPrint('Item added to UI: ${newItem.itemCode}, total items now: ${_receipt!.items.length}');
+            } catch (e) {
+              debugPrint('Error adding item to UI: $e');
+              setState(() {
+                _hasPendingChanges = true;
+              });
+            }
+          },
+        ),
       ),
     );
+    
+    // Log the current items count after returning from scan page
+    debugPrint('After scanning: Receipt has ${_receipt!.items.length} items (before refresh)');
+    
+    if (newlyAddedItems.isEmpty) {
+      debugPrint('No new items were added during scanning');
+      return; // No need to refresh if nothing was added
+    }
+    
+    // After returning from the scan page, refresh the receipt to ensure all data is in sync
+    await _fetchGoodReceipt();
+    
+    // Log the final items count after refresh
+    debugPrint('After refresh: Receipt has ${_receipt!.items.length} items');
+    
+    // Check if any newly scanned items are missing after refresh
+    if (_receipt != null) {
+      final Set<String> currentItemIds = _receipt!.items.map((item) => item.id).toSet();
+      
+      // Check for items that were added during scanning but are missing after refresh
+      bool anyItemsMissing = false;
+      for (final newItem in newlyAddedItems) {
+        if (!currentItemIds.contains(newItem.id)) {
+          debugPrint('Newly added item ${newItem.id} (${newItem.itemCode}) is missing after refresh');
+          // Re-add the missing item
+          _receipt!.items.add(newItem);
+          anyItemsMissing = true;
+        }
+      }
+      
+      if (anyItemsMissing) {
+        debugPrint('Re-added missing items to the receipt');
+        setState(() {
+          _hasPendingChanges = true;
+        });
+      }
+    }
+    
+    // Force a rebuild of the UI
+    setState(() {});
+    
+    // Debug log all items in the receipt
+    for (int i = 0; i < _receipt!.items.length; i++) {
+      debugPrint('Item $i: ${_receipt!.items[i].itemCode} - ${_receipt!.items[i].name}');
+    }
   }
 
   Future<void> _showAddItemDialog(BuildContext context) async {
@@ -237,7 +536,8 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
                   double qty = double.parse(qtyController.text);
                   double price = double.parse(priceController.text);
 
-                  await _goodReceiptService.createGoodReceiptItem(
+                  // Create the item in the database
+                  final addedItem = await _goodReceiptService.createGoodReceiptItem(
                     goodReceiptId: _receipt!.id,
                     itemCode: itemCodeController.text.trim(),
                     name: nameController.text.trim(),
@@ -248,14 +548,32 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
                   );
 
                   if (mounted) {
+                    // Close the dialog
                     Navigator.of(context).pop();
+                    
+                    // Show success message
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('Item added successfully')),
                     );
-                    setState(() {
-                      _isLoading = true;
-                    });
-                    await _fetchGoodReceipt();
+                    
+                    debugPrint('Manual item added: ${addedItem.toString()}');
+                    try {
+                      // Convert the item to a GoodReceiptItem and add it to the current receipt
+                      final newItem = GoodReceiptItem.fromJson(addedItem);
+                      
+                      // Update the UI immediately with the new item
+                      setState(() {
+                        // Add the new item to the existing receipt
+                        _receipt!.items.add(newItem);
+                        _hasPendingChanges = true;
+                      });
+                      
+                      debugPrint('Manual item added to UI: ${newItem.itemCode}');
+                    } catch (e) {
+                      debugPrint('Error adding manual item to UI: $e');
+                      // If there's an error in the immediate update, we'll rely on the full refresh
+                      await _fetchGoodReceipt();
+                    }
                   }
                 } catch (e) {
                   if (mounted) {
@@ -435,47 +753,17 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
                   Expanded(
                     child:
                         _receipt!.items.isEmpty
-                            ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Text(
-                                    'No items found',
-                                    style: TextStyle(fontSize: 18),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      ElevatedButton.icon(
-                                        onPressed:
-                                            () => _showAddItemDialog(context),
-                                        icon: const Icon(Icons.add),
-                                        label: const Text('Add Item Manually'),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      ElevatedButton.icon(
-                                        onPressed:
-                                            () => _navigateToScanItemPage(),
-                                        icon: const Icon(Icons.qr_code_scanner),
-                                        label: const Text('Scan Item'),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor:
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.primary,
-                                          foregroundColor: Colors.white,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            )
+                            ? const Center(
+                                child: Text(
+                                  'No items found',
+                                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                                ),
+                              )
                             : ListView.builder(
                               padding: const EdgeInsets.all(16.0),
                               itemCount: _receipt!.items.length,
                               itemBuilder: (context, index) {
+                                debugPrint('Building item at index $index: ${_receipt!.items[index].itemCode}');
                                 final item = _receipt!.items[index];
                                 return Card(
                                   child: Dismissible(
@@ -613,37 +901,45 @@ class _GoodsReceiptDetailsPageState extends State<GoodsReceiptDetailsPage> {
                   // Action Buttons
                   Padding(
                     padding: const EdgeInsets.all(16.0),
-                    child: Row(
+                    child: Column(
                       children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: () {
-                              _showAddItemDialog(context);
-                            },
-                            icon: const Icon(Icons.add),
-                            label: const Text('Add Item'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor:
-                                  Theme.of(context).colorScheme.primary,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.all(16),
-                            ),
+                        // Push to Server button - only visible when changes exist
+                        if (_hasPendingChanges)
+                          Column(
+                            children: [
+                              ElevatedButton.icon(
+                                onPressed: _isPushing ? null : _pushToServer,
+                                icon: _isPushing 
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(Icons.cloud_upload),
+                                label: Text(_isPushing ? 'Pushing...' : 'Push to Server'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.blue,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.all(16),
+                                  minimumSize: const Size(double.infinity, 50),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                            ],
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: () {
-                              // Return true to indicate changes were made
-                              Navigator.pop(context, true);
-                            },
-                            icon: const Icon(Icons.check),
-                            label: const Text('Done'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.all(16),
-                            ),
+                        // Add Item button (full width)
+                        ElevatedButton.icon(
+                          onPressed: () => _showAddItemDialog(context),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add Item'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Theme.of(context).colorScheme.secondary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.all(16),
+                            minimumSize: const Size(double.infinity, 50),
                           ),
                         ),
                       ],

@@ -94,6 +94,7 @@ class GoodReceiptItem {
   final double price;
   final String uom;
   final String? deviceId;
+  final bool? deleted;
 
   GoodReceiptItem({
     required this.id,
@@ -104,18 +105,34 @@ class GoodReceiptItem {
     required this.price,
     required this.uom,
     this.deviceId,
+    this.deleted,
   });
 
   factory GoodReceiptItem.fromJson(Map<String, dynamic> json) {
+    // Handle different numeric types (int, double, String) for qty and price
+    double parseNumericValue(dynamic value) {
+      if (value == null) return 0.0;
+      if (value is double) return value;
+      if (value is int) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
+    
+    // Debug the deleted flag
+    final rawDeletedValue = json['deleted'];
+    final isDeleted = rawDeletedValue == true;
+    print('ITEM DEBUG: Item ${json['id']} - ${json['itemCode']} - Raw deleted value: $rawDeletedValue, Interpreted as: $isDeleted');
+    
     return GoodReceiptItem(
       id: json['id'],
       goodReceiptId: json['goodReceiptId'],
       itemCode: json['itemCode'],
       name: json['name'],
-      qty: json['qty'].toDouble(),
-      price: json['price'].toDouble(),
+      qty: parseNumericValue(json['qty']),
+      price: parseNumericValue(json['price']),
       uom: json['uom'],
       deviceId: json['deviceId'],
+      deleted: isDeleted,
     );
   }
 
@@ -129,6 +146,7 @@ class GoodReceiptItem {
       'price': price,
       'uom': uom,
       'deviceId': deviceId,
+      'deleted': deleted,
     };
   }
 }

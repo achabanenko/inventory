@@ -26,11 +26,97 @@ class GraphQLService {
 
     final link = authLink.concat(httpLink);
 
-    _client = GraphQLClient(link: link, cache: GraphQLCache());
+    _client = GraphQLClient(
+      link: link,
+      cache: GraphQLCache(), // Still need the cache property
+      defaultPolicies: DefaultPolicies(
+        query: Policies(
+          fetch: FetchPolicy.noCache, // Don't use cache for queries
+        ),
+        mutate: Policies(
+          fetch: FetchPolicy.noCache, // Don't use cache for mutations
+        ),
+      ),
+    );
   }
 
-  GraphQLClient get client {
+  // Flag to track initialization status
+  bool _isInitializing = false;
+  bool _isInitialized = false;
+  
+  // Getter for initialization status
+  bool get isInitialized => _isInitialized;
+  
+  // Async method to get a properly initialized client
+  Future<GraphQLClient> getInitializedClient() async {
+    if (_isInitialized) {
+      return _client;
+    }
+    
+    if (!_isInitializing) {
+      _isInitializing = true;
+      try {
+        await initialize();
+        _isInitialized = true;
+        _isInitializing = false;
+        debugPrint('GraphQL client initialized successfully');
+      } catch (error) {
+        _isInitializing = false;
+        debugPrint('Error initializing GraphQL client: $error');
+        rethrow;
+      }
+    } else {
+      // Wait for initialization to complete if already in progress
+      int attempts = 0;
+      while (!_isInitialized && attempts < 5) {
+        debugPrint('Waiting for GraphQL client initialization... (attempt ${attempts + 1})');
+        await Future.delayed(Duration(milliseconds: 500));
+        attempts++;
+      }
+      
+      if (!_isInitialized) {
+        throw Exception('GraphQL client initialization timeout');
+      }
+    }
+    
     return _client;
+  }
+  
+  // Synchronous getter for client - use with caution
+  GraphQLClient get client {
+    if (_isInitialized) {
+      return _client;
+    }
+    
+    debugPrint('WARNING: Accessing GraphQL client before initialization');
+    // Start initialization if not already in progress
+    if (!_isInitializing) {
+      _isInitializing = true;
+      initialize().then((_) {
+        _isInitialized = true;
+        _isInitializing = false;
+        debugPrint('GraphQL client initialized successfully');
+      }).catchError((error) {
+        _isInitializing = false;
+        debugPrint('Error initializing GraphQL client: $error');
+      });
+    }
+    
+    // Return a temporary client with default settings
+    final apiUrl = 'http://localhost:4000'; // Default URL
+    final httpLink = HttpLink('$apiUrl/api/graphql');
+    return GraphQLClient(
+      link: httpLink,
+      cache: GraphQLCache(),
+      defaultPolicies: DefaultPolicies(
+        query: Policies(
+          fetch: FetchPolicy.noCache,
+        ),
+        mutate: Policies(
+          fetch: FetchPolicy.noCache,
+        ),
+      ),
+    );
   }
 
   // Method to refresh the client with updated settings
@@ -42,7 +128,7 @@ class GraphQLService {
 class GoodReceiptService {
   final GraphQLService _graphQLService = GraphQLService();
 
-  // Query to fetch all good receipts
+  // Query to fetch all good receipts with items (for details view)
   Future<List<Map<String, dynamic>>> getGoodReceipts({
     Map<String, dynamic>? filter,
   }) async {
@@ -72,11 +158,15 @@ class GoodReceiptService {
     ''';
 
     try {
-      final result = await _graphQLService.client.query(
+      // Use the async client initialization
+      final client = await _graphQLService.getInitializedClient();
+      
+      final result = await client.query(
         QueryOptions(
           document: gql(query),
-          variables: {'filter': filter ?? {}},
-          // fetchPolicy: FetchPolicy.,
+          variables: {
+            'filter': {'status': 0, ...filter ?? {}},
+          },
         ),
       );
 
@@ -87,7 +177,48 @@ class GoodReceiptService {
       final List<dynamic> data = result.data?['goodReceipts'] ?? [];
       return data.map((item) => item as Map<String, dynamic>).toList();
     } catch (e) {
-      debugPrint('Error fetching good receipts: $e');
+      debugPrint('Error fetching good receipts with items: $e');
+      rethrow;
+    }
+  }
+  
+  // Query to fetch only good receipt headers (for list view)
+  Future<List<Map<String, dynamic>>> getGoodReceiptHeaders({
+    Map<String, dynamic>? filter,
+  }) async {
+    const String query = r'''
+      query GetGoodReceiptHeaders($filter: GoodReceiptFilter) {
+        goodReceipts(filter: $filter) {
+          id
+          name
+          status
+          supplierCode
+          whs
+          delDate
+          createdAt
+          updatedAt
+        }
+      }
+    ''';
+
+    try {
+      final result = await _graphQLService.client.query(
+        QueryOptions(
+          document: gql(query),
+          variables: {
+            'filter': {'status': 0, ...filter ?? {}},
+          },
+        ),
+      );
+
+      if (result.hasException) {
+        throw Exception(result.exception.toString());
+      }
+
+      final List<dynamic> data = result.data?['goodReceipts'] ?? [];
+      return data.map((item) => item as Map<String, dynamic>).toList();
+    } catch (e) {
+      debugPrint('Error fetching good receipt headers: $e');
       rethrow;
     }
   }
@@ -353,6 +484,50 @@ class GoodReceiptService {
       return result.data?['deleteGoodReceiptItem']['success'] as bool;
     } catch (e) {
       debugPrint('Error deleting good receipt item: $e');
+      rethrow;
+    }
+  }
+
+  // Query to get all items for a specific good receipt
+  Future<List<Map<String, dynamic>>> getGoodReceiptItems(
+    String goodReceiptId,
+  ) async {
+    const String query = r'''
+      query GetGoodReceiptItems($goodReceiptId: ID!) {
+        goodReceiptItems(goodReceiptId: $goodReceiptId) {
+          id
+          goodReceiptId
+          itemCode
+          name
+          qty
+          price
+          uom
+          deviceId
+        }
+      }
+    ''';
+
+    try {
+      debugPrint('Fetching items for receipt $goodReceiptId from server');
+      final result = await _graphQLService.client.query(
+        QueryOptions(
+          document: gql(query),
+          variables: {'goodReceiptId': goodReceiptId},
+        ),
+      );
+
+      if (result.hasException) {
+        throw Exception(result.exception.toString());
+      }
+
+      final items = result.data?['goodReceiptItems'] as List<dynamic>?;
+      if (items == null) {
+        return [];
+      }
+
+      return items.map((item) => item as Map<String, dynamic>).toList();
+    } catch (e) {
+      debugPrint('Error fetching good receipt items from server: $e');
       rethrow;
     }
   }
@@ -741,11 +916,7 @@ class PrintLabelService {
       final result = await _graphQLService.client.mutate(
         MutationOptions(
           document: gql(mutation),
-          variables: {
-            'name': name,
-            'status': status,
-            'whs': whs,
-          },
+          variables: {'name': name, 'status': status, 'whs': whs},
         ),
       );
 
